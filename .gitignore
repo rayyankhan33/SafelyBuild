@@ -1,0 +1,31 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# SQLite database (auto-generated at runtime)
+quality_control.db
+
+# Temp uploads (created by the app at runtime)
+temp_uploads/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# YOLO model weights (downloaded at first run, ~338MB)
+*.pt
+
+# Annotated test output images
+annotated_*.jpg
