@@ -1,0 +1,22 @@
+{
+  "name": "safelybuild",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SafelyBuild - construction progress, cost and risk monitoring for investors and site engineers",
+  "workspaces": ["apps/api", "apps/web"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "db:start": "node scripts/dev-db.mjs",
+    "db:migrate": "npm run migrate -w apps/api",
+    "db:seed": "npm run seed -w apps/api",
+    "docs:erd": "node --env-file-if-exists=.env scripts/gen-erd.mjs",
+    "db:reseed": "npm run seed -w apps/api -- --reset",
+    "inference": "services/inference/.venv/Scripts/python -m uvicorn service:app --app-dir services/inference --port 8000",
+    "api": "npm run start -w apps/api",
+    "web": "npm run dev -w apps/web",
+    "test": "npm test -w apps/api",
+    "test:all": "node scripts/run-tests.mjs",
+    "test:inference": "services/inference/.venv/Scripts/python -m pytest services/inference/tests -q"
+  },
+  "devDependencies": { "embedded-postgres": "^18.4.0-beta.17" }
+}

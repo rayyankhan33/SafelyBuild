@@ -1,109 +1,56 @@
-# SafelyBuild — Construction Quality Control POC
+# SafelyBuild
 
-A proof-of-concept system that inspects construction site images for **rusted rebar** and **honeycombed concrete** defects, then simulates violation notifications to a concerned authority.
+Construction progress, cost and safety monitoring for investors and site engineers. Engineers enter the design (bill of quantities), log each day's progress, material use and site photos. The system estimates cost with ACI methods, forecasts final cost and finish date, scores site risk, and shows investors a plain-language dashboard while giving engineers the technical detail.
 
-Built as a Final Year Project (FYP) demonstration.
+**Status: Sprint 1 (FYP-1 mid evaluation).** Real working pipeline end to end. Two parts are deliberately simple and disclosed: defect detection uses colour/texture heuristics (no trained model yet), and material counting from photos is not implemented (a clearly labelled simulated provider exists for demos). See [docs/srs.md](docs/srs.md) section 5.
 
----
+| | |
+|---|---|
+| Investor view | Progress vs plan, money spent, expected final cost and overrun, expected finish date, site safety light, productivity, alerts, photos, all in plain words |
+| Engineer view | BOQ and estimate (ACI 211.1 / 318), schedule, daily log with photo analysis, SDI breakdown, risk matrix, hazards with category/ALARP zone/bow-tie, standards used, budget and schedule warnings |
+| Stack | React + Vite, Node/Express, PostgreSQL, Python/FastAPI + OpenCV |
 
-## Quick Start
+## Quick start
+
+See [docs/implementation.md](docs/implementation.md) for details.
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-
-# 2. Run the application
-streamlit run app.py
+npm install
+cd services/inference && python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt && cd ../..
+npm run db:start        # terminal 1 - local PostgreSQL (leave running)
+npm run db:seed         # demo project with ~6 weeks of site records
+npm run inference       # terminal 2
+npm run api             # terminal 3
+npm run web             # terminal 4 -> http://localhost:5173
+npm run test:all        # 116 tests, writes docs/test-results.md
 ```
 
-The app will open in your browser at `http://localhost:8501`.
+Demo logins (admin, engineer, investor) and the local-only demo password are at the top of `apps/api/src/db/seed.js`.
 
-> **First run:** The YOLO-World model (~338 MB) will be downloaded automatically on the first detection run. This is a one-time download.
+## Documents
 
----
+| Document | Purpose |
+|---|---|
+| [docs/srs.md](docs/srs.md) | Scope, success criteria, numbered requirements with acceptance checks |
+| [docs/design.md](docs/design.md) | Architecture, interfaces, sequence and state diagrams, algorithms, design evolution |
+| [docs/erd.md](docs/erd.md) | ER diagram generated from the live database |
+| [docs/implementation.md](docs/implementation.md) | Setup, file map, key-function walkthrough, decisions |
+| [docs/test-plan.md](docs/test-plan.md), [docs/test-results.md](docs/test-results.md) | Test strategy, failures found, latest run |
+| [docs/tool-disclosure.md](docs/tool-disclosure.md) | AI and tool disclosure, privacy |
+| [docs/iteration-plan.md](docs/iteration-plan.md), [docs/risks.md](docs/risks.md) | Plan, milestone log, risks |
+| [docs/panel-action-register.md](docs/panel-action-register.md) | Panel actions (to be completed by the team) |
+| [docs/rubric-conformance.md](docs/rubric-conformance.md) | Mid-evaluation rubric mapping and pre-evaluation checklist |
+| [docs/poc-README.md](docs/poc-README.md) | Original proof of concept description |
 
-## How It Works
-
-### Detection Pipeline
-
-```
-Image Upload -> Zero-Shot Detection -> Heuristic Scoring -> Severity Mapping -> Violation Check -> Notification
-```
-
-1. **Zero-Shot Detection** (`detector.py`):
-   Uses [YOLO-World](https://docs.ultralytics.com/models/yolo-world/) (yolov8s-worldv2) — an open-vocabulary object detector that can find objects based on text descriptions without any training data. We prompt it with descriptions like "steel rebar", "exposed reinforcement", and "concrete surface" to localize regions of interest.
-
-2. **Rust Heuristic** (`heuristics.py`):
-   For regions classified as rebar, we convert the cropped ROI to HSV color space and apply masks for rust-characteristic colors (orange-brown hues H:5-25, red-brown H:0-10 and H:160-179). The rust score is the fraction of the ROI area matching these color ranges.
-
-3. **Honeycomb Heuristic** (`heuristics.py`):
-   For regions classified as concrete surfaces, we detect voids using a combination of:
-   - Adaptive thresholding + Canny edge detection + contour analysis to find void-like regions
-   - Laplacian variance as a texture-roughness indicator
-   - Combined score: 60% void ratio + 40% normalized roughness
-
-4. **Severity Mapping** (`severity.py`):
-   Scores are mapped to severity levels:
-   | Score Range | Severity | Description |
-   |---|---|---|
-   | 0.00 - 0.15 | Low | Minor cosmetic concern |
-   | 0.15 - 0.35 | Medium | Noticeable; may affect durability |
-   | 0.35 - 0.60 | High | Significant; likely impacts durability |
-   | 0.60 - 1.00 | Critical | Severe; immediate remediation recommended |
-
-   Thresholds are informed by general defect severity language in ACI 201.1R and IS:456.
-
-5. **Violation Logic**: Defects at or above a configurable severity threshold (default: Medium) are flagged as violations.
-
-6. **Notification Simulation** (`notifier.py`): On violation, a simulated notification is displayed. The code uses a pluggable `Notifier` base class so real SMTP/Twilio notifiers can be swapped in.
-
-7. **SQLite Logging** (`db.py`): All analysis results are persisted to `quality_control.db` and displayed in the History tab.
-
----
-
-## Project Structure
+## Layout
 
 ```
-SafelyBuild/
-├── app.py              # Streamlit entrypoint (dashboard)
-├── detector.py         # YOLO-World zero-shot detection wrapper
-├── heuristics.py       # Rust + honeycomb scoring functions
-├── severity.py         # Score -> severity -> violation mapping
-├── db.py               # SQLite schema + logging functions
-├── notifier.py         # Notification simulation (pluggable)
-├── requirements.txt    # Python dependencies
-├── README.md           # This file
-└── quality_control.db  # SQLite database (auto-created)
+apps/api         Node/Express API, domain logic, tests
+apps/web         React web app (investor and engineer views)
+services/inference  Python image-analysis service (the original POC lives here too)
+db               SQL migrations and reference data
+scripts          dev database, ERD generator, test runner
+docs             all documentation
 ```
 
----
-
-## POC Limitations
-
-This is a **proof-of-concept** with several known limitations:
-
-1. **No trained model**: Detection relies on YOLO-World's zero-shot capability. It has not been fine-tuned on construction defect images. False positives and missed detections are expected.
-
-2. **Manually tuned thresholds**: All color ranges (rust HSV bounds), edge detection parameters (Canny thresholds), and severity score boundaries were manually calibrated on a small set of 4 sample images. These would need extensive calibration for real-world use.
-
-3. **Small sample validation**: The system has only been tested on 4 images. Performance on diverse construction environments, lighting conditions, and camera angles is unvalidated.
-
-4. **Heuristic scoring, not ML classification**: The rust and honeycomb scores are computed from simple image-processing rules (color thresholding, edge density), not from learned features. They can be fooled by similar-looking but non-defective surfaces (bare soil, patterned formwork, etc.).
-
-5. **No depth or 3D analysis**: Scores represent 2D image features only. Actual corrosion depth, concrete cover loss, or void volume cannot be assessed from images alone.
-
-6. **Simulated notifications**: The notification system logs to console only. No real email/SMS is sent. The architecture supports plugging in real notifiers.
-
----
-
-## Requirements
-
-- Python 3.10+
-- ~500 MB disk space (for the YOLO-World model + dependencies)
-- No GPU required (CPU inference is sufficient for POC)
-
----
-
-## License
-
-This project is an academic proof-of-concept. Not intended for production or safety-critical use.
+The original Streamlit proof of concept is kept at `services/inference/poc_streamlit_app.py` (needs `requirements-poc.txt`; not re-tested in Sprint 1).

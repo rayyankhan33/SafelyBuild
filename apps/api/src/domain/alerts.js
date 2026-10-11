@@ -1,0 +1,47 @@
+// Alert rules: given the current forecasts and safety status, decide which alerts should be open.
+// The persistence layer opens new keys and resolves keys that are no longer wanted, so each
+// condition produces exactly one open alert no matter how often the numbers are recomputed.
+
+import { budgetText, scheduleText } from './narrative.js';
+
+export function desiredAlerts({ budget, schedule, safety, sdi }) {
+  const out = [];
+
+  if (budget.status === 'at_risk' || budget.status === 'over_budget') {
+    const t = budgetText(budget);
+    out.push({
+      kind: 'budget', level: budget.status === 'over_budget' ? 'critical' : 'warning',
+      dedupe_key: `budget:${budget.status}`, technical_msg: t.technical, plain_msg: t.plain,
+    });
+  }
+
+  if (schedule.status === 'at_risk' || schedule.status === 'behind') {
+    const t = scheduleText(schedule);
+    out.push({
+      kind: 'schedule', level: schedule.status === 'behind' ? 'critical' : 'warning',
+      dedupe_key: `schedule:${schedule.status}`, technical_msg: t.technical, plain_msg: t.plain,
+    });
+  }
+
+  if (safety.status === 'critical' || safety.status === 'high') {
+    out.push({
+      kind: 'risk', level: safety.status === 'critical' ? 'critical' : 'warning',
+      dedupe_key: `risk:${safety.status}`,
+      technical_msg: `Safety status ${safety.status}: SDI ${sdi?.sdi ?? 'n/a'}, worst hazard rating ${safety.worst_rating}/25, ${safety.intolerable ?? 0} intolerable hazard(s).${sdi?.escalate ? ' SDI is above the escalation threshold.' : ''}`,
+      plain_msg: safety.status === 'critical'
+        ? 'Critical quality or safety issues are open on site. The engineer has been notified.'
+        : 'Serious quality or safety issues were found on site and are being addressed.',
+    });
+  }
+  return out;
+}
+
+/** Compare desired alerts with currently open ones -> what to insert and which ids to resolve. */
+export function diffAlerts(desired, open) {
+  const want = new Set(desired.map((a) => a.dedupe_key));
+  const have = new Set(open.map((a) => a.dedupe_key));
+  return {
+    toCreate: desired.filter((a) => !have.has(a.dedupe_key)),
+    toResolve: open.filter((a) => !want.has(a.dedupe_key)).map((a) => a.id),
+  };
+}

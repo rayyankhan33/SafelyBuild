@@ -1,0 +1,1 @@
+ultralytics>=8.1.0  # optional: enables the yolo_world backend (installs torch, ~GBs)
