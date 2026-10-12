@@ -1,14 +1,17 @@
 # SafelyBuild
 
-Construction progress, cost and safety monitoring for investors and site engineers. Engineers enter the design (bill of quantities), log each day's progress, material use and site photos. The system estimates cost with ACI methods, forecasts final cost and finish date, scores site risk, and shows investors a plain-language dashboard while giving engineers the technical detail.
+Construction progress, cost and safety monitoring for investors and site engineers, **measured from fixed-camera images that nobody on site can edit**.
 
-**Status: Sprint 1 (FYP-1 mid evaluation).** Real working pipeline end to end. Two parts are deliberately simple and disclosed: defect detection uses colour/texture heuristics (no trained model yet), and material counting from photos is not implemented (a clearly labelled simulated provider exists for demos). See [docs/srs.md](docs/srs.md) section 5.
+An engineer enters only the initial design/budget (bill of quantities), the crews on site and the equipment available. Everything else is measured automatically: how far each part of the building has got, how much material was used (and so how much money was spent), and which defects and hazards exist. The system forecasts final cost and finish date with earned-value maths and shows investors a plain-language dashboard, while giving engineers the technical detail: standards, scores, hazard categories, suggested measures and warnings.
+
+**Status: Sprint 1 (FYP-1 mid evaluation).** The platform and the automated pipeline work end to end and are tested (230 automated tests). **Read the limits first:** the demo project uses *synthetic* camera frames; the image methods are validated only on those; accuracy on real site footage is not yet measured; a trained model from the team is expected to plug in (see [docs/model-integration.md](docs/model-integration.md)). Details in [docs/srs.md](docs/srs.md) section 5.
 
 | | |
 |---|---|
-| Investor view | Progress vs plan, money spent, expected final cost and overrun, expected finish date, site safety light, productivity, alerts, photos, all in plain words |
-| Engineer view | BOQ and estimate (ACI 211.1 / 318), schedule, daily log with photo analysis, SDI breakdown, risk matrix, hazards with category/ALARP zone/bow-tie, standards used, budget and schedule warnings |
-| Stack | React + Vite, Node/Express, PostgreSQL, Python/FastAPI + OpenCV |
+| Investor view | Progress vs plan, money spent, expected final cost and overrun, expected finish date, safety light, productivity, alerts, camera photos, all in plain words |
+| Engineer view | BOQ and ACI 211.1/318 estimate, schedule, crews and equipment, evidence (camera health, frames, which model measured them), read-only risk: danger index, risk matrix, hazards with category / ALARP zone / bow-tie, standards, warnings |
+| Tamper resistance | Frames only from registered cameras (secret key, clock check, replay protection); no route to enter or edit progress, spend, defects or hazards; hazards close only after the cameras show the area clean on 3 consecutive days |
+| Stack | React + Vite, Node/Express, PostgreSQL, Python/FastAPI + OpenCV, pluggable model backends |
 
 ## Quick start
 
@@ -17,25 +20,24 @@ See [docs/implementation.md](docs/implementation.md) for details.
 ```bash
 npm install
 cd services/inference && python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt && cd ../..
-npm run db:start        # terminal 1 - local PostgreSQL (leave running)
-npm run db:seed         # demo project with ~6 weeks of site records
-npm run inference       # terminal 2
-npm run api             # terminal 3
-npm run web             # terminal 4 -> http://localhost:5173
-npm run test:all        # 116 tests, writes docs/test-results.md
+npm run dev             # starts everything -> http://localhost:5173  (Ctrl+C stops it)
+npm run test:all        # 230 tests (database must be running), writes docs/test-results.md
 ```
 
-Demo logins (admin, engineer, investor) and the local-only demo password are at the top of `apps/api/src/db/seed.js`.
+`npm run dev` starts PostgreSQL, the image-analysis service, the API and the web app in order, builds the demo project on first run (about a minute), and prefixes every log line with the service name. Each part can also be run alone (see implementation.md).
+
+Demo logins and what to check in each view: [docs/demo-accounts.md](docs/demo-accounts.md).
 
 ## Documents
 
 | Document | Purpose |
 |---|---|
-| [docs/srs.md](docs/srs.md) | Scope, success criteria, numbered requirements with acceptance checks |
-| [docs/design.md](docs/design.md) | Architecture, interfaces, sequence and state diagrams, algorithms, design evolution |
+| [docs/srs.md](docs/srs.md) | Scope, success criteria, numbered requirements with acceptance checks, known limitations |
+| [docs/design.md](docs/design.md) | Architecture, interfaces, sequence and state diagrams, algorithms, the evidence and tamper model |
+| [docs/model-integration.md](docs/model-integration.md) | **For the model-training teammate**: contract, plug-in steps, evaluation, training-data export |
 | [docs/erd.md](docs/erd.md) | ER diagram generated from the live database |
 | [docs/implementation.md](docs/implementation.md) | Setup, file map, key-function walkthrough, decisions |
-| [docs/test-plan.md](docs/test-plan.md), [docs/test-results.md](docs/test-results.md) | Test strategy, failures found, latest run |
+| [docs/test-plan.md](docs/test-plan.md), [docs/test-results.md](docs/test-results.md) | Test strategy, 14 failures found, latest run |
 | [docs/tool-disclosure.md](docs/tool-disclosure.md) | AI and tool disclosure, privacy |
 | [docs/iteration-plan.md](docs/iteration-plan.md), [docs/risks.md](docs/risks.md) | Plan, milestone log, risks |
 | [docs/panel-action-register.md](docs/panel-action-register.md) | Panel actions (to be completed by the team) |
@@ -45,12 +47,12 @@ Demo logins (admin, engineer, investor) and the local-only demo password are at 
 ## Layout
 
 ```
-apps/api         Node/Express API, domain logic, tests
-apps/web         React web app (investor and engineer views)
-services/inference  Python image-analysis service (the original POC lives here too)
-db               SQL migrations and reference data
-scripts          dev database, ERD generator, test runner
-docs             all documentation
+apps/api            Node/Express API, domain logic, tests
+apps/web            React web app (investor and engineer views)
+services/inference  Python image-analysis service: backend registry, classical and pretrained backends, plug-ins, evaluation
+db                  SQL migrations and reference data
+scripts             dev launcher, dev database, camera simulator, training-set export, ERD generator, test runner
+docs                all documentation
 ```
 
-The original Streamlit proof of concept is kept at `services/inference/poc_streamlit_app.py` (needs `requirements-poc.txt`; not re-tested in Sprint 1).
+The original Streamlit proof of concept is kept at `services/inference/poc_streamlit_app.py` (needs `requirements-poc.txt`; not re-tested).

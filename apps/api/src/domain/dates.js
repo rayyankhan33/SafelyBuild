@@ -44,4 +44,6 @@ export function eachDay(from, to) {
   return out;
 }
 
-export const today = () => fmt(new Date());
+// The site's local calendar date (UTC + offset, default +5 for Pakistan), matching how camera frames are dated.
+const SITE_OFFSET_HOURS = Number(process.env.SITE_UTC_OFFSET_HOURS ?? 5);
+export const today = () => fmt(new Date(Date.now() + SITE_OFFSET_HOURS * 3_600_000));

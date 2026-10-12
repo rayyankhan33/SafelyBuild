@@ -1,8 +1,10 @@
 // Integration tests: real Express app + real PostgreSQL (database safelybuild_test) + fake inference.
-// Covers happy paths and the failure/edge cases required by docs/srs.md (TC-API-*).
+// Covers the automated-evidence design: engineers enter only BOQ/budget, crews and equipment;
+// everything else arrives from cameras (TC-API-*, see docs/srs.md).
 import { startFakeInference } from './env.js';
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 
 const fake = await startFakeInference();
 const { pool } = await import('../src/db/pool.js');
@@ -10,15 +12,17 @@ const { resetDatabase } = await import('../src/db/migrate.js');
 const { createApp } = await import('../src/app.js');
 const { hashPassword } = await import('../src/http.js');
 const { addDays, today } = await import('../src/domain/dates.js');
+const { authenticateCamera, ingestFrame } = await import('../src/services/ingest.js');
+const { rebuild } = await import('../src/services/rollup.js');
 
 const PW = 'Test-Password-1';
 let server, base;
 const tokens = {};
-let projectId, org2Project;
-let taskIds = [];
+let projectId; let taskIds = []; let elements = {};
+let zoneKey; let yardKey; let gateKey;
 
-async function api(method, path, { token, body, form } = {}) {
-  const headers = {};
+async function api(method, path, { token, body, form, headers: extra } = {}) {
+  const headers = { ...(extra ?? {}) };
   if (token) headers.authorization = `Bearer ${token}`;
   let payload;
   if (form) payload = form;
@@ -26,16 +30,21 @@ async function api(method, path, { token, body, form } = {}) {
   const res = await fetch(base + path, { method, headers, body: payload });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = text; }
-  return { status: res.status, body: json };
+  return { status: res.status, body: json, headers: res.headers };
 }
-const login = async (email, password = PW) => api('POST', '/api/auth/login', { body: { email, password } });
-const jpeg = () => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(2000, 7)]);
-function photoForm(buf = jpeg(), tag = 'general') {
+const login = (email, password = PW) => api('POST', '/api/auth/login', { body: { email, password } });
+const jpeg = () => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), crypto.randomBytes(1500)]); // unique bytes each call
+
+function frameForm(buf, capturedAt) {
   const f = new FormData();
-  f.append('files', new Blob([buf], { type: 'image/jpeg' }), 'p.jpg');
-  f.append('tag', tag);
+  f.append('image', new Blob([buf], { type: 'image/jpeg' }), 'f.jpg');
+  if (capturedAt !== undefined) f.append('captured_at', capturedAt);
   return f;
 }
+const ingest = (key, { buf = jpeg(), at = new Date().toISOString(), token } = {}) =>
+  api('POST', '/api/ingest/frame', { form: frameForm(buf, at), headers: key ? { 'x-camera-key': key } : {}, token });
+const dash = (token, id = projectId) => api('GET', `/api/projects/${id}/dashboard`, { token }).then((r) => r.body);
+const minutesAgo = (m) => new Date(Date.now() - m * 60_000).toISOString();
 
 before(async () => {
   await resetDatabase(pool);
@@ -48,14 +57,13 @@ before(async () => {
   await mk(org.id, 'eng@a.test', 'engineer');
   await mk(org.id, 'eng2@a.test', 'engineer');
   await mk(org.id, 'inv@a.test', 'investor');
-  const eng3 = await mk(org2.id, 'eng@b.test', 'engineer');
+  await mk(org2.id, 'eng@b.test', 'engineer');
   await pool.query("INSERT INTO users (org_id, email, password_hash, full_name, role, is_active) VALUES ($1,'off@a.test',$2,'off','engineer',false)", [org.id, await hashPassword(PW)]);
   server = createApp().listen(0);
   base = `http://127.0.0.1:${server.address().port}`;
   for (const [k, e] of [['admin', 'admin@a.test'], ['eng', 'eng@a.test'], ['eng2', 'eng2@a.test'], ['inv', 'inv@a.test'], ['engB', 'eng@b.test']]) {
     tokens[k] = (await login(e)).body.token;
   }
-  void eng3;
 });
 after(async () => {
   server.close();
@@ -80,33 +88,30 @@ describe('authentication (TC-API-AUTH)', () => {
     assert.equal((await api('GET', '/api/projects')).status, 401);
     assert.equal((await api('GET', '/api/projects', { token: 'abc.def.ghi' })).status, 401);
   });
-  test('disabled account cannot log in', async () => {
-    assert.equal((await login('off@a.test')).status, 401);
-  });
+  test('disabled account cannot log in', async () => assert.equal((await login('off@a.test')).status, 401));
   test('repeated failures are rate limited', async () => {
     let last;
     for (let i = 0; i < 6; i++) last = await login('inv@a.test', 'bad');
     assert.equal(last.status, 429);
-    assert.equal((await login('inv@a.test')).status, 429); // even the right password is blocked while limited
+    assert.equal((await login('inv@a.test')).status, 429);
   });
-  test('only admins can create users; short passwords refused', async () => {
+  test('only admins can create users; short passwords refused; duplicates conflict', async () => {
     const body = { email: 'new@a.test', full_name: 'New', role: 'engineer', password: 'LongEnough1' };
     assert.equal((await api('POST', '/api/users', { token: tokens.eng, body })).status, 403);
     assert.equal((await api('POST', '/api/users', { token: tokens.admin, body: { ...body, password: 'short' } })).status, 422);
     assert.equal((await api('POST', '/api/users', { token: tokens.admin, body })).status, 201);
-    assert.equal((await api('POST', '/api/users', { token: tokens.admin, body })).status, 409); // duplicate email
+    assert.equal((await api('POST', '/api/users', { token: tokens.admin, body })).status, 409);
   });
 });
 
-describe('project setup, estimate and schedule (TC-API-SETUP)', () => {
-  test('engineer creates project; investor cannot', async () => {
+describe('engineer inputs: BOQ, budget, schedule (TC-API-SETUP)', () => {
+  test('engineer creates the project; investor cannot', async () => {
     const start = addDays(today(), -10);
     assert.equal((await api('POST', '/api/projects', { token: tokens.inv, body: { name: 'X', start_date: start } })).status, 403);
     assert.equal((await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'X', start_date: 'tomorrow' } })).status, 422);
     const r = await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'Test Block', location: 'Islamabad', start_date: start } });
     assert.equal(r.status, 201);
     projectId = r.body.project.id;
-    // make investor and a second engineer members / non-members
     const inv = (await pool.query("SELECT id FROM users WHERE email = 'inv@a.test'")).rows[0].id;
     await pool.query('INSERT INTO project_members VALUES ($1,$2)', [projectId, inv]);
   });
@@ -122,228 +127,381 @@ describe('project setup, estimate and schedule (TC-API-SETUP)', () => {
     const neg = await api('POST', `/api/projects/${projectId}/elements`, { token: tokens.eng, body: { label: 'S', element_type: 'slab', length_m: -1, width_m: 5, thickness_m: 0.1, concrete_fc_mpa: 25 } });
     assert.equal(neg.status, 422);
   });
-  test('valid BOQ -> estimate -> activated budget -> schedule', async () => {
+  test('valid BOQ -> estimate -> activated budget -> schedule whose task budgets add up', async () => {
     const els = [
       { label: 'Footings', element_type: 'footing', quantity: 20, length_m: 1.5, width_m: 1.5, height_m: 0.5, concrete_fc_mpa: 25 },
-      { label: 'Columns', element_type: 'column', quantity: 20, length_m: 0.4, width_m: 0.4, height_m: 3, concrete_fc_mpa: 30 },
       { label: 'Slab', element_type: 'slab', quantity: 1, length_m: 20, width_m: 15, thickness_m: 0.15, concrete_fc_mpa: 25 },
     ];
-    assert.equal((await api('POST', `/api/projects/${projectId}/elements`, { token: tokens.eng, body: els })).status, 201);
+    const made = await api('POST', `/api/projects/${projectId}/elements`, { token: tokens.eng, body: els });
+    assert.equal(made.status, 201);
+    elements = Object.fromEntries(made.body.elements.map((e) => [e.element_type, e.id]));
     const est = await api('POST', `/api/projects/${projectId}/estimates`, { token: tokens.eng, body: { contingency_pct: 5 } });
     assert.equal(est.status, 201);
-    assert.ok(est.body.estimate.total_pkr > 0);
     const proj = (await api('GET', `/api/projects/${projectId}`, { token: tokens.eng })).body.project;
     assert.equal(proj.budget_pkr, est.body.estimate.total_pkr);
-
-    const sch = await api('POST', `/api/projects/${projectId}/schedule/generate`, { token: tokens.eng, body: {} });
-    assert.equal(sch.status, 201);
+    assert.equal((await api('POST', `/api/projects/${projectId}/schedule/generate`, { token: tokens.eng, body: {} })).status, 201);
     const tasks = (await api('GET', `/api/projects/${projectId}/schedule`, { token: tokens.eng })).body.tasks;
     taskIds = tasks.map((t) => t.id);
-    assert.equal(tasks.length, 3);
-    const bac = tasks.reduce((s, t) => s + t.planned_cost_pkr, 0);
-    assert.ok(Math.abs(bac - est.body.estimate.total_pkr) < 1, `task budgets (${bac}) must add up to the estimate (${est.body.estimate.total_pkr})`);
+    assert.equal(tasks.length, 2);
+    assert.ok(Math.abs(tasks.reduce((s, t) => s + t.planned_cost_pkr, 0) - est.body.estimate.total_pkr) < 1);
   });
-  test('rate edits change the next estimate', async () => {
+  test('prices come from the admin-only price book; engineers cannot change them', async () => {
+    assert.equal((await api('PUT', '/api/price-book', { token: tokens.eng, body: { CEMENT: 1 } })).status, 403);
+    assert.equal((await api('PUT', `/api/projects/${projectId}/rates`, { token: tokens.eng, body: { CEMENT: 1 } })).status, 404);
     const before = (await api('POST', `/api/projects/${projectId}/estimates`, { token: tokens.eng, body: { contingency_pct: 5, activate: false } })).body.estimate.total_pkr;
-    await api('PUT', `/api/projects/${projectId}/rates`, { token: tokens.eng, body: { CEMENT: 2800 } });
+    assert.equal((await api('PUT', '/api/price-book', { token: tokens.admin, body: { CEMENT: 2800 } })).status, 200);
     const after = (await api('POST', `/api/projects/${projectId}/estimates`, { token: tokens.eng, body: { contingency_pct: 5, activate: false } })).body.estimate.total_pkr;
     assert.ok(after > before);
-    await api('PUT', `/api/projects/${projectId}/rates`, { token: tokens.eng, body: { CEMENT: 1400 } });
+    await api('PUT', '/api/price-book', { token: tokens.admin, body: { CEMENT: 1400 } });
+  });
+  test('regenerating the schedule over measured progress needs explicit confirmation (covered below)', () => {});
+});
+
+describe('there is no human path to evidence (TC-API-NOHUMAN)', () => {
+  test('endpoints that used to accept typed progress, spend, photos and hazards no longer exist', async () => {
+    const d = today();
+    const tries = [
+      ['PUT', `/api/projects/${projectId}/logs/${d}`, { progress: [], materials: [] }],
+      ['POST', `/api/projects/${projectId}/logs/${d}/media`, undefined],
+      ['POST', `/api/projects/${projectId}/hazards`, { title: 'x', category: 'y', likelihood: 1, severity: 1 }],
+      ['PATCH', `/api/projects/${projectId}/hazards/${crypto.randomUUID()}`, { status: 'closed' }],
+      ['GET', '/api/hazard-library', undefined],
+    ];
+    for (const role of ['eng', 'admin']) {
+      for (const [m, p, b] of tries) {
+        const r = await api(m, p, { token: tokens[role], body: b });
+        assert.equal(r.status, 404, `${role} ${m} ${p} -> ${r.status}`);
+      }
+    }
+  });
+  test('site status accepts only crews and equipment; any extra field is refused', async () => {
+    const put = (body, token = tokens.eng, date = today()) => api('PUT', `/api/projects/${projectId}/site-status/${date}`, { token, body });
+    assert.equal((await put({ crews: 2, equipment: [{ type: 'Concrete mixer', count: 2 }] })).status, 200);
+    for (const extra of [{ progress: [{ task_id: taskIds[0], percent: 100 }] }, { materials: [] }, { notes: 'all fine' }, { hazards_closed: true }, { workers_present: 3 }]) {
+      const r = await put({ crews: 2, equipment: [], ...extra });
+      assert.equal(r.status, 422, JSON.stringify(extra));
+    }
+    assert.equal((await put({ crews: -1, equipment: [] })).status, 422);
+    assert.equal((await put({ crews: 1, equipment: [{ type: '', count: 1 }] })).status, 422);
+    assert.equal((await put({ crews: 1, equipment: [] }, tokens.eng, addDays(today(), 3))).status, 422);
+    assert.equal((await put({ crews: 1, equipment: [] }, tokens.eng, addDays(today(), -400))).status, 422);
+    assert.equal((await put({ crews: 1, equipment: [] }, tokens.inv)).status, 403);
+  });
+  test('crews and equipment are stored and visible to engineers', async () => {
+    const r = await api('GET', `/api/projects/${projectId}/site-status`, { token: tokens.eng });
+    assert.equal(r.body.site_status[0].crews, 2);
+    assert.equal(r.body.site_status[0].equipment[0].type, 'Concrete mixer');
+  });
+  test('the database refuses manual hazards and unflagged closures even if the API were bypassed', async () => {
+    await assert.rejects(() => pool.query(
+      "INSERT INTO hazards (project_id, source, category, title, likelihood, severity, identified_on) VALUES ($1,'manual','c','t',1,1,'2026-01-01')", [projectId]), (e) => e.code === '23514');
+    await assert.rejects(() => pool.query(
+      "INSERT INTO hazards (project_id, source, category, title, likelihood, severity, status, identified_on) VALUES ($1,'auto_defect','c','t',1,1,'closed','2026-01-01')", [projectId]), (e) => e.code === '23514');
   });
 });
 
-describe('access control (TC-API-RBAC)', () => {
+describe('cameras (TC-API-CAM)', () => {
+  const create = (token, body, id = projectId) => api('POST', `/api/projects/${id}/cameras`, { token, body });
+  test('only admins can install cameras', async () => {
+    const body = { name: 'Zone cam', kind: 'zone', element_id: elements.slab };
+    assert.equal((await create(tokens.eng, body)).status, 403);
+    assert.equal((await create(tokens.inv, body)).status, 403);
+  });
+  test('zone cameras need an element of this project; yard cameras need a calibrated scale', async () => {
+    assert.equal((await create(tokens.admin, { name: 'z', kind: 'zone' })).status, 422);
+    assert.equal((await create(tokens.admin, { name: 'z2', kind: 'zone', element_id: crypto.randomUUID() })).status, 422);
+    assert.equal((await create(tokens.admin, { name: 'yy', kind: 'yard' })).status, 422);
+    assert.equal((await create(tokens.admin, { name: 'yy', kind: 'yard', scale_m_per_px: -1 })).status, 422);
+  });
+  test('the key is shown once and only its hash is stored', async () => {
+    const z = await create(tokens.admin, { name: 'Zone camera - Slab', kind: 'zone', element_id: elements.slab, detect_defects: false });
+    assert.equal(z.status, 201);
+    zoneKey = z.body.key;
+    assert.match(zoneKey, /^[0-9a-f-]{36}\.[0-9a-f]{48}$/);
+    const row = (await pool.query('SELECT key_hash FROM cameras WHERE id = $1', [z.body.camera.id])).rows[0];
+    assert.notEqual(row.key_hash, zoneKey.split('.')[1]);
+    assert.equal(row.key_hash, crypto.createHash('sha256').update(zoneKey.split('.')[1]).digest('hex'));
+    const y = await create(tokens.admin, { name: 'Yard camera', kind: 'yard', scale_m_per_px: 0.1, detect_defects: false });
+    yardKey = y.body.key;
+    const g = await create(tokens.admin, { name: 'Gate camera', kind: 'overview' });
+    gateKey = g.body.key;
+    const list = await api('GET', `/api/projects/${projectId}/cameras`, { token: tokens.eng });
+    assert.equal(list.body.cameras.length, 3);
+    assert.ok(!JSON.stringify(list.body).includes(zoneKey.split('.')[1]));
+    assert.ok(!('key_hash' in list.body.cameras[0]));
+    assert.equal((await api('GET', `/api/projects/${projectId}/cameras`, { token: tokens.inv })).status, 403);
+  });
+});
+
+describe('ingest security (TC-API-INGEST)', () => {
+  test('no key, wrong key, malformed key: refused', async () => {
+    assert.equal((await ingest(null)).status, 401);
+    assert.equal((await ingest(`${zoneKey.split('.')[0]}.${'0'.repeat(48)}`)).status, 401);
+    assert.equal((await ingest('garbage')).status, 401);
+    assert.equal((await ingest(`${crypto.randomUUID()}.${'a'.repeat(48)}`)).status, 401);
+  });
+  test('a logged-in engineer or admin cannot submit frames: only a camera can', async () => {
+    assert.equal((await ingest(null, { token: tokens.eng })).status, 401);
+    assert.equal((await ingest(null, { token: tokens.admin })).status, 401);
+  });
+  test('a camera key cannot be used as a user session', async () => {
+    assert.equal((await api('GET', '/api/projects', { token: zoneKey })).status, 401);
+    assert.equal((await api('GET', '/api/projects', { headers: { 'x-camera-key': zoneKey } })).status, 401);
+  });
+  test('missing image, non-image content, empty file: refused', async () => {
+    assert.equal((await api('POST', '/api/ingest/frame', { form: new FormData(), headers: { 'x-camera-key': zoneKey } })).status, 422);
+    assert.equal((await ingest(zoneKey, { buf: Buffer.from('<?php echo 1; ?>') })).status, 422);
+    assert.equal((await ingest(zoneKey, { buf: Buffer.alloc(0) })).status, 422);
+  });
+  test('frames whose camera clock disagrees with the server are refused (stale, future, garbage)', async () => {
+    const stale = await ingest(zoneKey, { at: minutesAgo(60 * 24 * 3) });
+    assert.equal(stale.status, 422); assert.equal(stale.body.error.code, 'clock_skew');
+    assert.equal((await ingest(zoneKey, { at: new Date(Date.now() + 3_600_000).toISOString() })).status, 422);
+    assert.equal((await ingest(zoneKey, { at: 'not a date' })).status, 422);
+    const noTime = new FormData();
+    noTime.append('image', new Blob([jpeg()], { type: 'image/jpeg' }), 'f.jpg');
+    assert.equal((await api('POST', '/api/ingest/frame', { form: noTime, headers: { 'x-camera-key': zoneKey } })).status, 422); // captured_at missing
+  });
+  test('replaying the same frame is refused; a different camera may send the same bytes', async () => {
+    fake.state.mode = 'ok'; fake.state.stage = 0; fake.state.items = [];
+    const buf = jpeg();
+    assert.equal((await ingest(zoneKey, { buf })).status, 201);
+    const again = await ingest(zoneKey, { buf });
+    assert.equal(again.status, 409); assert.equal(again.body.error.code, 'duplicate_frame');
+    assert.equal((await ingest(gateKey, { buf })).status, 201);
+  });
+  test('a disabled camera is refused', async () => {
+    const extra = await api('POST', `/api/projects/${projectId}/cameras`, { token: tokens.admin, body: { name: 'Spare', kind: 'overview' } });
+    const [id] = extra.body.key.split('.');
+    assert.equal((await ingest(extra.body.key)).status, 201);
+    assert.equal((await api('PATCH', `/api/projects/${projectId}/cameras/${id}`, { token: tokens.eng, body: { active: false } })).status, 403);
+    assert.equal((await api('PATCH', `/api/projects/${projectId}/cameras/${id}`, { token: tokens.admin, body: { active: false } })).status, 200);
+    assert.equal((await ingest(extra.body.key)).status, 401);
+  });
+});
+
+describe('frames become measurements (TC-API-MEASURE)', () => {
+  test('two agreeing zone frames set task progress from the stage; nobody typed it', async () => {
+    fake.state.stage = 2; // slab: rebar mesh visible -> range 45-70 -> reported 57.5 %
+    for (let i = 0; i < 2; i++) assert.equal((await ingest(zoneKey, { at: minutesAgo(5 - i) })).status, 201);
+    const tasks = (await api('GET', `/api/projects/${projectId}/schedule`, { token: tokens.eng })).body.tasks;
+    const slab = tasks.find((t) => t.name.startsWith('Slab'));
+    assert.equal(slab.percent_complete, 57.5);
+    const rows = (await pool.query("SELECT source FROM task_progress")).rows;
+    assert.ok(rows.length > 0 && rows.every((r) => r.source === 'image_stage'));
+  });
+  test('one frame alone does not move progress', async () => {
+    const f = (await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'One frame', start_date: addDays(today(), -3) } })).body.project;
+    await api('POST', `/api/projects/${f.id}/elements`, { token: tokens.eng, body: { label: 'S', element_type: 'slab', length_m: 10, width_m: 10, thickness_m: 0.15, concrete_fc_mpa: 25 } });
+    await api('POST', `/api/projects/${f.id}/estimates`, { token: tokens.eng, body: {} });
+    await api('POST', `/api/projects/${f.id}/schedule/generate`, { token: tokens.eng, body: {} });
+    const el = (await pool.query('SELECT id FROM design_elements WHERE project_id = $1', [f.id])).rows[0].id;
+    const cam = await api('POST', `/api/projects/${f.id}/cameras`, { token: tokens.admin, body: { name: 'cam', kind: 'zone', element_id: el } });
+    fake.state.stage = 3;
+    assert.equal((await ingest(cam.body.key)).status, 201);
+    const tasks = (await api('GET', `/api/projects/${f.id}/schedule`, { token: tokens.eng })).body.tasks;
+    assert.equal(tasks[0].percent_complete, 0);
+  });
+  test('yard frames: stock falling during the day is measured consumption and priced from the price book', async () => {
+    const mk = (qty) => { fake.state.items = [{ material_code: 'SAND', quantity: qty, unit: 'm3', area_px: 1, method: 'fake', confidence: 0.5 }]; };
+    mk(100); assert.equal((await ingest(yardKey, { at: minutesAgo(8) })).status, 201);
+    mk(80); assert.equal((await ingest(yardKey, { at: minutesAgo(1) })).status, 201);
+    const d = await dash(tokens.eng);
+    const rate = (await pool.query("SELECT p.rate_pkr FROM price_book p JOIN material_catalog m ON m.id = p.material_id WHERE m.code = 'SAND'")).rows[0].rate_pkr;
+    assert.equal(d.headline.budget.spent, 20 * rate);
+    const inv = d.inventory.find((r) => r.material === 'SAND');
+    assert.equal(inv.used_qty, 20);
+    const src = (await pool.query("SELECT DISTINCT source FROM material_usage")).rows.map((r) => r.source);
+    assert.deepEqual(src, ['image_estimate']);
+  });
+  test('re-running the roll-up changes nothing (idempotent replay)', async () => {
+    const project = (await pool.query('SELECT * FROM projects WHERE id = $1', [projectId])).rows[0];
+    const snap = async () => JSON.stringify([(await pool.query('SELECT percent_complete FROM task_progress ORDER BY 1')).rows, (await pool.query('SELECT used_qty, delivered_qty FROM inventory_daily ORDER BY 1,2')).rows]);
+    const a = await snap();
+    await rebuild(pool, project); await rebuild(pool, project);
+    assert.equal(await snap(), a);
+  });
+  test('a later price-book change does not rewrite what past days cost', async () => {
+    const before = (await dash(tokens.eng)).headline.budget.spent;
+    await api('PUT', '/api/price-book', { token: tokens.admin, body: { SAND: 9999 } });
+    const project = (await pool.query('SELECT * FROM projects WHERE id = $1', [projectId])).rows[0];
+    await rebuild(pool, project);
+    assert.equal((await dash(tokens.eng)).headline.budget.spent, before);
+    await api('PUT', '/api/price-book', { token: tokens.admin, body: { SAND: 3002 } });
+  });
+  test('regenerating the schedule over measured progress needs explicit confirmation', async () => {
+    const r = await api('POST', `/api/projects/${projectId}/schedule/generate`, { token: tokens.eng, body: {} });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error.code, 'would_erase_progress');
+  });
+  test('every analysis records which model produced it', async () => {
+    const runs = (await pool.query("SELECT kind, model_version FROM inference_runs WHERE kind IN ('stage','inventory') AND status = 'succeeded'")).rows;
+    assert.ok(runs.length > 0);
+    assert.ok(runs.every((r) => r.model_version === 'fake@0'));
+  });
+});
+
+describe('failure handling (TC-API-FAIL)', () => {
+  test('inference down: frame is stored, run marked failed, system alert raised, then cleared', async () => {
+    fake.state.mode = 'down';
+    const r = await ingest(gateKey);
+    assert.equal(r.status, 201);
+    assert.equal(r.body.analysis.defects.status, 'failed');
+    const run = (await pool.query("SELECT status, error FROM inference_runs WHERE media_id = $1 AND kind = 'defects'", [r.body.media_id])).rows[0];
+    assert.equal(run.status, 'failed');
+    assert.match(run.error, /unreachable|timed out/);
+    const file = await fetch(`${base}/api/media/${r.body.media_id}/file`, { headers: { authorization: `Bearer ${tokens.eng}` } });
+    assert.equal(file.status, 200);
+    assert.equal((await pool.query("SELECT 1 FROM alerts WHERE project_id = $1 AND kind = 'system' AND dedupe_key = 'system:analysis_failed' AND resolved_at IS NULL", [projectId])).rowCount, 1);
+    fake.state.mode = 'ok'; fake.state.findings = [];
+    assert.equal((await ingest(gateKey)).status, 201);
+    assert.equal((await pool.query("SELECT 1 FROM alerts WHERE project_id = $1 AND dedupe_key = 'system:analysis_failed' AND resolved_at IS NULL", [projectId])).rowCount, 0);
+  });
+  test('inference returning 500 is recorded, not a crash', async () => {
+    fake.state.mode = 'error';
+    const r = await ingest(gateKey);
+    assert.equal(r.status, 201);
+    assert.match(r.body.analysis.defects.error, /model crashed/);
+    fake.state.mode = 'ok';
+  });
+  test('regression: a missing photo file returns an error without cache headers', async () => {
+    const m = (await pool.query(
+      `INSERT INTO media (project_id, tag, storage_key, sha256, content_type, size_bytes) VALUES ($1,'general','missing/none.jpg','x','image/jpeg',1) RETURNING id`, [projectId])).rows[0];
+    const res = await fetch(`${base}/api/media/${m.id}/file`, { headers: { authorization: `Bearer ${tokens.eng}` } });
+    assert.equal(res.status, 500);
+    assert.ok(!(res.headers.get('cache-control') ?? '').includes('max-age'));
+  });
+  test('photos are only served to members of the project', async () => {
+    const id = (await pool.query('SELECT id FROM media WHERE project_id = $1 AND storage_key NOT LIKE $2 LIMIT 1', [projectId, 'missing/%'])).rows[0].id;
+    const get = (t) => fetch(`${base}/api/media/${id}/file`, { headers: { authorization: `Bearer ${t}` } }).then((r) => r.status);
+    assert.equal(await get(tokens.inv), 200);
+    assert.equal(await get(tokens.engB), 404);
+    assert.equal(await get(tokens.eng2), 404);
+  });
+});
+
+describe('hazards and evidence over several days (TC-API-LIFE)', () => {
+  // Multi-day histories cannot arrive over HTTP (the clock check forbids it), so they are loaded the
+  // way a camera back-fills: through the ingest service with backfill, then the same roll-up.
+  const day = (n) => addDays(today(), -n);
+  const at = (d) => new Date(`${d}T05:00:00Z`);
+  let gate; let project;
+  before(async () => {
+    project = (await pool.query('SELECT * FROM projects WHERE id = $1', [projectId])).rows[0];
+    // a camera of its own, so frames sent by earlier tests do not count as extra clean days
+    const made = await api('POST', `/api/projects/${projectId}/cameras`, { token: tokens.admin, body: { name: 'Gate camera', kind: 'overview' } });
+    gate = await authenticateCamera(pool, made.body.key);
+    await pool.query("UPDATE cameras SET name = 'Gate camera (lifecycle)' WHERE id = $1", [gate.id]);
+    await pool.query('DELETE FROM defects WHERE project_id = $1', [projectId]); // start from a clean evidence base
+    await pool.query('DELETE FROM hazards WHERE project_id = $1', [projectId]);
+  });
+  const send = async (n, findings) => {
+    fake.state.findings = findings;
+    return ingestFrame(pool, gate, { buffer: jpeg(), capturedAt: at(day(n)), backfill: true });
+  };
+  const rust = [{ defect_type: 'rusted_rebar', score: 0.5, severity: 'High', is_violation: true, bbox: [1, 1, 50, 50], confidence: null }];
+
+  test('a defect raises a hazard automatically; engineers and investors see it but cannot alter it', async () => {
+    await send(6, rust);
+    await rebuild(pool, project);
+    const d = await dash(tokens.eng);
+    const h = d.risk.hazards.find((x) => x.status === 'open');
+    assert.equal(h.title, 'Corroded reinforcement');
+    assert.equal(h.category, 'Structural integrity');
+    assert.ok(h.bow_tie.preventive.length > 0);
+    assert.equal(h.camera, 'Gate camera (lifecycle)');
+    assert.ok(['moderate', 'high', 'critical'].includes(d.headline.safety.status));
+    assert.equal((await api('PATCH', `/api/projects/${projectId}/hazards/${h.id}`, { token: tokens.eng, body: { status: 'closed' } })).status, 404);
+  });
+  test('the hazard closes by itself after three clean inspection days, not before', async () => {
+    await send(5, []); await send(4, []);
+    await rebuild(pool, project);
+    assert.equal((await dash(tokens.eng)).risk.hazards.find((x) => x.title === 'Corroded reinforcement').status, 'open');
+    await send(3, []);
+    await rebuild(pool, project);
+    const h = (await dash(tokens.eng)).risk.hazards.find((x) => x.title === 'Corroded reinforcement');
+    assert.equal(h.status, 'closed');
+    assert.equal(h.closed_on, day(3));
+  });
+  test('a repeat defect after closure opens a new hazard; the history is kept', async () => {
+    await send(2, rust);
+    await rebuild(pool, project);
+    const hs = (await dash(tokens.eng)).risk.hazards.filter((x) => x.title === 'Corroded reinforcement');
+    assert.deepEqual(hs.map((x) => x.status).sort(), ['closed', 'open']);
+  });
+  test('rebuilding hazards from the same evidence always gives the same result', async () => {
+    const snap = async () => JSON.stringify((await pool.query('SELECT title, status, identified_on, closed_on, clean_days, likelihood FROM hazards ORDER BY identified_on, title')).rows);
+    const a = await snap();
+    await rebuild(pool, project); await rebuild(pool, project);
+    assert.equal(await snap(), a);
+  });
+  test('quiet cameras are flagged and safety is marked unverified, never silently fine', async () => {
+    await pool.query("UPDATE cameras SET last_frame_at = now() - interval '10 days' WHERE project_id = $1 AND kind = 'yard'", [projectId]);
+    const d = await dash(tokens.eng);
+    assert.equal(d.headline.safety.evidence_gap, true);
+    assert.ok(d.alerts.some((a) => /No recent frames from: .*Yard camera/.test(a.message)));
+    assert.match((await dash(tokens.inv)).headline.safety.text, /not reported recently/);
+    assert.ok(d.evidence.cameras.some((c) => c.name === 'Yard camera' && c.status === 'stale'));
+  });
+  test('tasks with no camera are called out', async () => {
+    const d = await dash(tokens.eng);
+    assert.deepEqual(d.evidence.uncovered_tasks.length, 1); // the footing task has no zone camera
+    assert.ok(d.alerts.some((a) => /No camera covers/.test(a.message)));
+  });
+  test('the alert clears when the camera reports again', async () => {
+    await pool.query("UPDATE cameras SET last_frame_at = now() WHERE project_id = $1", [projectId]);
+    const d = await dash(tokens.eng);
+    assert.ok(!d.alerts.some((a) => /No recent frames from/.test(a.message)));
+  });
+});
+
+describe('role views and access control (TC-API-RBAC)', () => {
   test('other organisation sees 404, not 403', async () => {
     assert.equal((await api('GET', `/api/projects/${projectId}`, { token: tokens.engB })).status, 404);
     assert.equal((await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.engB })).status, 404);
   });
-  test('engineer who is not a member sees 404; admin sees all in org', async () => {
+  test('non-member engineer sees 404; admin sees all in the organisation', async () => {
     assert.equal((await api('GET', `/api/projects/${projectId}`, { token: tokens.eng2 })).status, 404);
     assert.equal((await api('GET', `/api/projects/${projectId}`, { token: tokens.admin })).status, 200);
   });
   test('project list only contains accessible projects', async () => {
     assert.equal((await api('GET', '/api/projects', { token: tokens.eng2 })).body.projects.length, 0);
-    assert.equal((await api('GET', '/api/projects', { token: tokens.inv })).body.projects.length, 1);
+    assert.ok((await api('GET', '/api/projects', { token: tokens.inv })).body.projects.length >= 1);
   });
-  test('investor is read-only', async () => {
+  test('investor is read-only on every write endpoint', async () => {
     for (const [m, p, b] of [
       ['POST', `/api/projects/${projectId}/elements`, { label: 'x', element_type: 'slab', length_m: 1, width_m: 1, thickness_m: 1, concrete_fc_mpa: 25 }],
-      ['PUT', `/api/projects/${projectId}/logs/${today()}`, {}],
-      ['POST', `/api/projects/${projectId}/hazards`, { title: 'h', category: 'c', likelihood: 1, severity: 1 }],
-      ['PUT', `/api/projects/${projectId}/rates`, { CEMENT: 1 }],
-    ]) {
-      assert.equal((await api(m, p, { token: tokens.inv, body: b })).status, 403, `${m} ${p}`);
-    }
+      ['PUT', `/api/projects/${projectId}/site-status/${today()}`, { crews: 1, equipment: [] }],
+      ['POST', `/api/projects/${projectId}/estimates`, {}],
+      ['POST', `/api/projects/${projectId}/cameras`, { name: 'x', kind: 'overview' }],
+      ['PUT', '/api/price-book', { CEMENT: 1 }],
+    ]) assert.equal((await api(m, p, { token: tokens.inv, body: b })).status, 403, `${m} ${p}`);
   });
-  test('malformed project id is a 404, not a 500', async () => {
-    assert.equal((await api('GET', '/api/projects/not-a-uuid', { token: tokens.eng })).status, 404);
+  test('malformed project id is a 404, not a 500', async () => assert.equal((await api('GET', '/api/projects/not-a-uuid', { token: tokens.eng })).status, 404));
+  test('investor view is plain language and carries no engineering internals', async () => {
+    const d = await dash(tokens.inv);
+    for (const k of ['risk', 'standards', 'estimate', 'inventory', 'site_status', 'metrics']) assert.equal(d[k], undefined, k);
+    assert.doesNotMatch(JSON.stringify(d.alerts), /SDI|CPI|EAC|ALARP|SPI/);
+    assert.match(d.evidence.note, /measured automatically/);
   });
-});
-
-describe('daily logs, spend and forecasts (TC-API-LOG)', () => {
-  const day = (n) => addDays(today(), -n);
-  const put = (date, body, token = tokens.eng) => api('PUT', `/api/projects/${projectId}/logs/${date}`, { token, body });
-
-  test('future date, unknown task, decreasing progress are rejected', async () => {
-    assert.equal((await put(addDays(today(), 2), {})).status, 422);
-    assert.equal((await put(day(5), { progress: [{ task_id: '00000000-0000-4000-8000-000000000000', percent: 5 }] })).status, 422);
-    assert.equal((await put(day(9) , { })).status, 200);
-    assert.equal((await put(addDays(addDays(today(), -10), -3), {})).status, 422); // before project start
-  });
-  test('valid logs produce a forecast that matches the logged spend', async () => {
-    const spendPlan = [[day(6), 10, 5], [day(5), 18, 5], [day(4), 25, 5], [day(3), 31, 5]];
-    for (const [d, pct, bags] of spendPlan) {
-      const r = await put(d, { workers_present: 20, progress: [{ task_id: taskIds[0], percent: pct }], materials: [{ material_code: 'CEMENT', quantity: bags, source: 'manual' }] });
-      assert.equal(r.status, 200, JSON.stringify(r.body));
-    }
-    const dash = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.inv })).body;
-    assert.equal(dash.setup_complete, true);
-    assert.equal(dash.headline.budget.spent, 4 * 5 * 1400); // 4 days x 5 bags x PKR 1400
-    assert.ok(dash.headline.percent_complete > 0);
-    assert.ok(['on_track', 'at_risk', 'over_budget', 'under_budget'].includes(dash.headline.budget.status));
-  });
-  test('progress may not go down or jump above a later day', async () => {
-    assert.equal((await put(day(2), { progress: [{ task_id: taskIds[0], percent: 20 }] })).status, 422);
-    assert.equal((await put(day(7), { progress: [{ task_id: taskIds[0], percent: 50 }] })).status, 422); // later day (day 6) is only 10%
-  });
-  test('re-submitting a day replaces its entries instead of duplicating spend', async () => {
-    await put(day(6), { materials: [{ material_code: 'CEMENT', quantity: 5 }] });
-    const dash = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.inv })).body;
-    assert.equal(dash.headline.budget.spent, 4 * 5 * 1400);
-  });
-  test('regenerating the schedule after progress needs explicit confirmation', async () => {
-    const r = await api('POST', `/api/projects/${projectId}/schedule/generate`, { token: tokens.eng, body: {} });
-    assert.equal(r.status, 409);
-    assert.equal(r.body.error.code, 'would_erase_progress');
-  });
-  test('insufficient data wording appears when there are too few logs (separate project)', async () => {
-    const p = (await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'Fresh', start_date: day(3) } })).body.project;
-    await api('POST', `/api/projects/${p.id}/elements`, { token: tokens.eng, body: { label: 'S', element_type: 'slab', length_m: 10, width_m: 10, thickness_m: 0.15, concrete_fc_mpa: 25 } });
-    await api('POST', `/api/projects/${p.id}/estimates`, { token: tokens.eng, body: {} });
-    await api('POST', `/api/projects/${p.id}/schedule/generate`, { token: tokens.eng, body: {} });
-    const dash = (await api('GET', `/api/projects/${p.id}/dashboard`, { token: tokens.eng })).body;
-    assert.equal(dash.headline.budget.status, 'insufficient_data');
-    assert.equal(dash.headline.schedule.status === 'insufficient_data' || dash.headline.schedule.status === 'not_started', true);
-  });
-  test('dashboard before any schedule says setup is incomplete', async () => {
-    const p = (await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'Empty', start_date: day(1) } })).body.project;
-    const dash = (await api('GET', `/api/projects/${p.id}/dashboard`, { token: tokens.eng })).body;
-    assert.equal(dash.setup_complete, false);
-  });
-});
-
-describe('photo analysis, hazards, alerts (TC-API-PHOTO)', () => {
-  const up = (buf, tag, date = today()) => api('POST', `/api/projects/${projectId}/logs/${date}/media`, { token: tokens.eng, form: photoForm(buf, tag) });
-
-  test('non-image upload is rejected even with an image content-type', async () => {
-    const r = await up(Buffer.from('<?php echo 1; ?>'));
-    assert.equal(r.status, 422);
-  });
-  test('upload with no file is rejected', async () => {
-    const r = await api('POST', `/api/projects/${projectId}/logs/${today()}/media`, { token: tokens.eng, form: new FormData() });
-    assert.equal(r.status, 422);
-  });
-  test('violation defect creates a hazard, raises safety status and an alert', async () => {
-    fake.state.mode = 'ok';
-    fake.state.findings = [{ defect_type: 'honeycombed_concrete', score: 0.5, severity: 'High', is_violation: true, bbox: [10, 10, 200, 200], confidence: null, backend: 'fake' }];
-    const r = await up(jpeg(), 'general');
-    assert.equal(r.status, 201, JSON.stringify(r.body));
-    assert.equal(r.body.uploads[0].analysis.defects.status, 'succeeded');
-    const dash = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.eng })).body;
-    assert.equal(dash.risk.hazards.length, 1);
-    assert.equal(dash.risk.hazards[0].title, 'Honeycombed concrete');
-    assert.ok(dash.risk.hazards[0].bow_tie.preventive.length > 0);
-    assert.ok(['high', 'critical'].includes(dash.headline.safety.status));
-    assert.ok(dash.alerts.some((a) => a.kind === 'risk'));
-  });
-  test('a second detection of the same defect does not duplicate the hazard', async () => {
-    await up(jpeg(), 'general');
-    const dash = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.eng })).body;
-    assert.equal(dash.risk.hazards.length, 1);
-  });
-  test('investor view hides engineering detail but keeps plain-language status', async () => {
-    const dash = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.inv })).body;
-    assert.equal(dash.risk, undefined);
-    assert.equal(dash.standards, undefined);
-    assert.equal(dash.estimate, undefined);
-    assert.doesNotMatch(JSON.stringify(dash.alerts), /SDI|CPI|EAC|ALARP/);
-    assert.ok(dash.headline.safety.text.length > 10);
-  });
-  test('engineer view carries standards, estimate mixes and hazard categories', async () => {
-    const dash = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.eng })).body;
-    assert.ok(dash.standards.some((s) => s.code === 'ACI 211.1'));
-    assert.ok(dash.estimate.mixes.length >= 1);
-    assert.equal(dash.risk.hazards[0].category, 'Structural integrity');
-    assert.ok(dash.risk.sdi && typeof dash.risk.sdi.sdi === 'number');
-  });
-  test('closing the hazard lowers the overall safety status', async () => {
-    const dash = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.eng })).body;
-    const before = dash.risk.safety.worst_rating;
-    const h = dash.risk.hazards[0];
-    assert.equal((await api('PATCH', `/api/projects/${projectId}/hazards/${h.id}`, { token: tokens.inv, body: { status: 'closed' } })).status, 403);
-    assert.equal((await api('PATCH', `/api/projects/${projectId}/hazards/${h.id}`, { token: tokens.eng, body: { status: 'closed' } })).status, 200);
-    const after = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.eng })).body;
-    assert.ok(after.risk.safety.worst_rating < before);
-  });
-  test('inference service down: photo is still saved, run marked failed, system alert raised, then cleared', async () => {
-    fake.state.mode = 'down';
-    const r = await up(jpeg(), 'general');
-    assert.equal(r.status, 201);
-    assert.equal(r.body.uploads[0].analysis.defects.status, 'failed');
-    const mediaId = r.body.uploads[0].media.id;
-    const file = await fetch(`${base}/api/media/${mediaId}/file`, { headers: { authorization: `Bearer ${tokens.eng}` } });
-    assert.equal(file.status, 200);
-    const run = (await pool.query("SELECT status, error FROM inference_runs WHERE media_id = $1 AND kind = 'defects'", [mediaId])).rows[0];
-    assert.equal(run.status, 'failed');
-    assert.match(run.error, /unreachable|timed out/);
-    const open = (await pool.query("SELECT 1 FROM alerts WHERE project_id = $1 AND kind = 'system' AND resolved_at IS NULL", [projectId])).rowCount;
-    assert.equal(open, 1);
-
-    fake.state.mode = 'ok';
-    fake.state.findings = [];
-    await up(jpeg(), 'general');
-    const still = (await pool.query("SELECT 1 FROM alerts WHERE project_id = $1 AND kind = 'system' AND resolved_at IS NULL", [projectId])).rowCount;
-    assert.equal(still, 0);
-  });
-  test('inference service returning 500 is recorded as a failed run, not a crash', async () => {
-    fake.state.mode = 'error';
-    const r = await up(jpeg(), 'general');
-    assert.equal(r.status, 201);
-    assert.match(r.body.uploads[0].analysis.defects.error, /model crashed/);
-    fake.state.mode = 'ok';
-  });
-  test('overview photos compare with the previous overview photo; material photos return proposals', async () => {
-    const a = await up(jpeg(), 'overview');
-    assert.equal(a.body.uploads[0].analysis.activity.status, 'skipped');
-    const b = await up(jpeg(), 'overview');
-    assert.equal(b.body.uploads[0].analysis.activity.status, 'succeeded');
-    const m = await up(jpeg(), 'material');
-    assert.equal(m.body.uploads[0].analysis.materials.proposals[0].material_code, 'CEMENT');
-  });
-  test('photos are only served to members of the project', async () => {
-    const id = (await pool.query('SELECT id FROM media WHERE project_id = $1 LIMIT 1', [projectId])).rows[0].id;
-    const ok = await fetch(`${base}/api/media/${id}/file`, { headers: { authorization: `Bearer ${tokens.inv}` } });
-    const no = await fetch(`${base}/api/media/${id}/file`, { headers: { authorization: `Bearer ${tokens.engB}` } });
-    const no2 = await fetch(`${base}/api/media/${id}/file`, { headers: { authorization: `Bearer ${tokens.eng2}` } });
-    assert.equal(ok.status, 200); assert.equal(no.status, 404); assert.equal(no2.status, 404);
-  });
-  test('regression: a missing photo file returns an error without cache headers', async () => {
-    // found during manual testing: cache headers were set before the file read failed, so a browser cached the 500
-    const m = (await pool.query(
-      `INSERT INTO media (project_id, tag, storage_key, sha256, content_type, size_bytes, uploaded_by)
-       SELECT $1, 'general', 'missing/none.jpg', 'x', 'image/jpeg', 1, id FROM users WHERE email = 'eng@a.test' RETURNING id`, [projectId])).rows[0];
-    const res = await fetch(`${base}/api/media/${m.id}/file`, { headers: { authorization: `Bearer ${tokens.eng}` } });
-    assert.equal(res.status, 500);
-    assert.ok(!(res.headers.get('cache-control') ?? '').includes('max-age'));
+  test('engineer view carries standards, mixes, hazards with categories, stock, crews and the evidence trail', async () => {
+    const d = await dash(tokens.eng);
+    assert.ok(d.standards.some((s) => s.code === 'ACI 211.1'));
+    assert.ok(d.estimate.mixes.length >= 1);
+    assert.ok(d.risk.hazards.every((h) => h.category && h.zone));
+    assert.ok(d.risk.sdi === null || typeof d.risk.sdi.sdi === 'number');
+    assert.ok(d.inventory.length > 0);
+    assert.ok(d.site_status.length > 0);
+    assert.ok(Array.isArray(d.evidence.frames) && d.evidence.frames.length > 0);
   });
 });
 
 describe('audit trail (TC-API-AUDIT)', () => {
-  test('mutations are recorded with the acting user', async () => {
+  test('mutations and ingests are recorded; investors cannot read the log', async () => {
     const r = await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.eng });
     assert.equal(r.status, 200);
     const actions = r.body.audit.map((a) => `${a.action}:${a.entity}`);
-    for (const need of ['create:design_elements', 'create:estimate', 'generate:schedule', 'upsert:daily_log', 'upload:media']) {
+    for (const need of ['create:design_elements', 'create:estimate', 'generate:schedule', 'create:camera', 'set:site_status', 'ingest:frame', 'disable:camera']) {
       assert.ok(actions.includes(need), `missing ${need}`);
     }
     assert.equal((await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.inv })).status, 403);

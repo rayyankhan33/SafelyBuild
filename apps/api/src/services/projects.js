@@ -1,6 +1,5 @@
 // Project workflows that combine database access with the pure domain functions.
 // Rule of thumb: SQL lives here and in routes; arithmetic lives in src/domain.
-import { config } from '../config.js';
 import { withTx } from '../db/pool.js';
 import { bad, HttpError, notFound } from '../http.js';
 import { estimate as runEstimate, validateElement } from '../domain/estimation.js';
@@ -15,22 +14,21 @@ export async function loadFactors(db) {
   return Object.fromEntries(rows.map((r) => [r.key, num(r.value)]));
 }
 
-export async function loadRates(db, projectId) {
-  const { rows } = await db.query(
-    `SELECT m.code, r.rate_pkr FROM project_material_rates r JOIN material_catalog m ON m.id = r.material_id
-     WHERE r.project_id = $1`, [projectId]);
+/** Global price book (admin-maintained). Engineers cannot change prices. */
+export async function loadRates(db) {
+  const { rows } = await db.query('SELECT m.code, p.rate_pkr FROM price_book p JOIN material_catalog m ON m.id = p.material_id');
   return Object.fromEntries(rows.map((r) => [r.code, num(r.rate_pkr)]));
 }
 
-export async function setRates(db, projectId, rates) {
+export async function setPriceBook(db, userId, rates) {
   const { rows: cat } = await db.query('SELECT id, code FROM material_catalog');
   const byCode = Object.fromEntries(cat.map((c) => [c.code, c.id]));
   for (const [code, rate] of Object.entries(rates)) {
     if (!byCode[code]) throw bad(`unknown material '${code}'`);
     await db.query(
-      `INSERT INTO project_material_rates (project_id, material_id, rate_pkr) VALUES ($1,$2,$3)
-       ON CONFLICT (project_id, material_id) DO UPDATE SET rate_pkr = EXCLUDED.rate_pkr, updated_at = now()`,
-      [projectId, byCode[code], rate]);
+      `INSERT INTO price_book (material_id, rate_pkr, updated_by) VALUES ($1,$2,$3)
+       ON CONFLICT (material_id) DO UPDATE SET rate_pkr = EXCLUDED.rate_pkr, effective_from = CURRENT_DATE, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      [byCode[code], rate, userId]);
   }
 }
 
@@ -43,7 +41,6 @@ export async function createProject(db, user, { name, location, description, sta
       [user.org_id, name, location ?? null, description ?? null, start_date, user.id]);
     const p = rows[0];
     await c.query('INSERT INTO project_members (project_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [p.id, user.id]);
-    await setRates(c, p.id, config.defaultRatesPkr);
     return p;
   });
 }
@@ -54,7 +51,7 @@ export async function createEstimate(db, project, userId, { contingency_pct = 0,
   if (!elements.length) throw bad('add design elements before estimating');
   const problems = elements.flatMap((e) => validateElement(numify(e)));
   if (problems.length) throw bad('design elements are incomplete', problems);
-  const [factors, rates] = await Promise.all([loadFactors(db), loadRates(db, project.id)]);
+  const [factors, rates] = await Promise.all([loadFactors(db), loadRates(db)]);
 
   let result;
   try {
@@ -153,76 +150,23 @@ export async function getSchedule(db, projectId) {
   return rows;
 }
 
-// ------------------------------------------------------------------ daily logs
-export async function upsertLog(db, project, user, date, body) {
-  if (diffDays(date, today()) < 0) throw bad('log date cannot be in the future');
-  if (diffDays(project.start_date, date) < 0) throw bad(`log date is before the project start (${project.start_date})`);
-
-  const tasks = (await db.query('SELECT id FROM schedule_tasks WHERE project_id = $1', [project.id])).rows.map((r) => r.id);
-  const known = new Set(tasks);
-  for (const p of body.progress ?? []) if (!known.has(p.task_id)) throw bad(`task ${p.task_id} does not belong to this project`);
-  const seen = new Set();
-  for (const p of body.progress ?? []) {
-    if (seen.has(p.task_id)) throw bad('the same task appears twice in progress');
-    seen.add(p.task_id);
-  }
-
-  // cumulative percent must never decrease over time: compare with the neighbouring logs
-  for (const p of body.progress ?? []) {
-    const { rows } = await db.query(
-      `SELECT l.log_date, tp.percent_complete AS pct FROM task_progress tp JOIN daily_logs l ON l.id = tp.daily_log_id
-       WHERE tp.task_id = $1 AND l.project_id = $2 AND l.log_date <> $3 ORDER BY l.log_date`, [p.task_id, project.id, date]);
-    const before = rows.filter((r) => r.log_date < date).at(-1);
-    const after = rows.find((r) => r.log_date > date);
-    if (before && p.percent < before.pct) throw bad(`progress cannot go down: task was already ${before.pct}% on ${before.log_date}`);
-    if (after && p.percent > after.pct) throw bad(`progress ${p.percent}% exceeds ${after.pct}% already recorded for a later day (${after.log_date})`);
-  }
-
-  const { rows: cat } = await db.query('SELECT id, code, unit FROM material_catalog');
-  const catBy = Object.fromEntries(cat.map((m) => [m.code, m]));
-  const rates = await loadRates(db, project.id);
-  for (const m of body.materials ?? []) if (!catBy[m.material_code]) throw bad(`unknown material '${m.material_code}'`);
-
-  return withTx(db, async (c) => {
-    const log = (await c.query(
-      `INSERT INTO daily_logs (project_id, log_date, author_id, workers_present, weather, notes)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (project_id, log_date) DO UPDATE
-         SET workers_present = COALESCE(EXCLUDED.workers_present, daily_logs.workers_present),
-             weather = COALESCE(EXCLUDED.weather, daily_logs.weather),
-             notes = COALESCE(EXCLUDED.notes, daily_logs.notes)
-       RETURNING *`,
-      [project.id, date, user.id, body.workers_present ?? null, body.weather ?? null, body.notes ?? null])).rows[0];
-
-    if (body.progress) {
-      await c.query('DELETE FROM task_progress WHERE daily_log_id = $1', [log.id]);
-      for (const p of body.progress) {
-        await c.query('INSERT INTO task_progress (daily_log_id, task_id, percent_complete) VALUES ($1,$2,$3)', [log.id, p.task_id, p.percent]);
-      }
-    }
-    if (body.materials) {
-      await c.query('DELETE FROM material_usage WHERE daily_log_id = $1', [log.id]);
-      for (const m of body.materials) {
-        const rate = rates[m.material_code] ?? 0;
-        await c.query(
-          `INSERT INTO material_usage (daily_log_id, material_id, quantity, rate_pkr, cost_pkr, source, confidence, media_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [log.id, catBy[m.material_code].id, m.quantity, rate, Math.round(m.quantity * rate * 100) / 100,
-            m.source ?? 'manual', m.confidence ?? null, m.media_id ?? null]);
-      }
-    }
-    return log;
-  });
+// ------------------------------------------------------------------ site status (the only daily engineer input)
+/** Crews on site and equipment available. Nothing about progress, materials, defects or hazards. */
+export async function setSiteStatus(db, project, user, date, { crews, equipment }) {
+  if (diffDays(date, today()) < 0) throw bad('date cannot be in the future');
+  if (diffDays(project.start_date, date) < 0) throw bad(`date is before the project start (${project.start_date})`);
+  const { rows } = await db.query(
+    `INSERT INTO daily_logs (project_id, log_date, author_id, crews, equipment, site_status_by, site_status_at)
+     VALUES ($1,$2,$3,$4,$5,$3,now())
+     ON CONFLICT (project_id, log_date) DO UPDATE
+       SET crews = EXCLUDED.crews, equipment = EXCLUDED.equipment, site_status_by = EXCLUDED.site_status_by, site_status_at = now()
+     RETURNING log_date, crews, equipment, site_status_at`,
+    [project.id, date, user.id, crews, JSON.stringify(equipment)]);
+  return rows[0];
 }
 
-export async function getLog(db, projectId, date) {
-  const log = (await db.query('SELECT * FROM daily_logs WHERE project_id = $1 AND log_date = $2', [projectId, date])).rows[0];
-  if (!log) throw notFound('daily log');
-  const [progress, materials, media] = await Promise.all([
-    db.query('SELECT task_id, percent_complete FROM task_progress WHERE daily_log_id = $1', [log.id]),
-    db.query(`SELECT m.code AS material_code, u.quantity, m.unit, u.rate_pkr, u.cost_pkr, u.source, u.confidence, u.media_id
-              FROM material_usage u JOIN material_catalog m ON m.id = u.material_id WHERE u.daily_log_id = $1 ORDER BY m.id`, [log.id]),
-    db.query('SELECT id, tag, content_type, created_at FROM media WHERE daily_log_id = $1 ORDER BY created_at', [log.id]),
-  ]);
-  return { ...log, progress: progress.rows, materials: materials.rows, media: media.rows };
+export async function listSiteStatus(db, projectId) {
+  const { rows } = await db.query(
+    `SELECT log_date, crews, equipment FROM daily_logs WHERE project_id = $1 AND crews IS NOT NULL ORDER BY log_date DESC LIMIT 120`, [projectId]);
+  return rows;
 }

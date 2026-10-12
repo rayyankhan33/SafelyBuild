@@ -18,12 +18,9 @@ export const config = {
   inferenceTimeoutMs: Number(env.INFERENCE_TIMEOUT_MS || 60_000),
   storageDir: env.STORAGE_DIR || path.join(repoRoot, 'storage'),
   maxUploadBytes: 15 * 1024 * 1024,
-  // Indicative market rates in PKR - DEMO VALUES, edit per project before relying on an estimate.
-  defaultRatesPkr: { CEMENT: 1400, SAND: 85, AGGREGATE: 120, REBAR: 270, BRICK: 28 },
+  // Site local time is UTC+5 (Pakistan): a frame's "day" is its local calendar date.
+  siteUtcOffsetHours: Number(env.SITE_UTC_OFFSET_HOURS || 5),
+  // Frames whose camera clock differs from the server by more than this are rejected (replay / clock tampering).
+  maxClockSkewMs: Number(env.MAX_CLOCK_SKEW_MS || 10 * 60_000),
+  maxFramesPerCameraPerDay: Number(env.MAX_FRAMES_PER_CAMERA_PER_DAY || 200),
 };
-
-// SAND and AGGREGATE rates above are per cubic foot-equivalents converted to m3 below so that
-// the unit shown in the UI (m3) is consistent with the quantities estimated.
-const CFT_PER_M3 = 35.3147;
-config.defaultRatesPkr.SAND = Math.round(config.defaultRatesPkr.SAND * CFT_PER_M3);
-config.defaultRatesPkr.AGGREGATE = Math.round(config.defaultRatesPkr.AGGREGATE * CFT_PER_M3);

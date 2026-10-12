@@ -118,22 +118,6 @@ def test_different_view_flags_alignment():
     assert r["alignment_ok"] is False
 
 
-# ---- materials provider ---------------------------------------------------------
-def test_materials_default_returns_no_proposals():
-    p = pipeline.MaterialProvider("none").propose(png(solid((1, 2, 3))))
-    assert p["proposals"] == [] and p["simulated"] is False
-
-
-def test_materials_simulated_is_flagged():
-    p = pipeline.MaterialProvider("simulated").propose(png(solid((1, 2, 3))))
-    assert p["simulated"] is True and p["proposals"]
-
-
-def test_materials_bad_mode():
-    with pytest.raises(ValueError):
-        pipeline.MaterialProvider("magic")
-
-
 # ---- HTTP layer -----------------------------------------------------------------
 def test_health():
     r = client.get("/health")
@@ -153,7 +137,8 @@ def test_http_defects_bad_image_422():
 
 def test_http_defects_bad_params():
     data = png(solid((1, 2, 3)))
-    assert client.post("/v1/defects?backend=zzz", files={"image": ("a.png", data, "image/png")}).status_code == 422
+    assert client.post("/v1/defects?backend=zzz", files={"image": ("a.png", data, "image/png")}).status_code == 501  # unknown backend
+    assert client.post("/v1/defects?backend=../x", files={"image": ("a.png", data, "image/png")}).status_code == 422  # malformed name
     assert client.post("/v1/defects?min_violation=Huge", files={"image": ("a.png", data, "image/png")}).status_code == 422
 
 

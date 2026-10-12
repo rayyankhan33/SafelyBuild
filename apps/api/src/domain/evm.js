@@ -71,11 +71,12 @@ export function actualCost(spend, asOf) {
  * @param {object[]} input.tasks     {id, planned_start, planned_end, planned_cost_pkr}
  * @param {object[]} input.progress  {date, task_id, percent}
  * @param {object[]} input.spend     {date, cost_pkr}  one row per material entry
+ * @param {{date: string, crews: number}[]} [input.crews] crews on site per day (engineer input), for context only
  * @param {string}   input.asOf      status date
  * @param {string}   input.projectStart
  * @param {string}   input.plannedEnd
  */
-export function evaluate({ tasks, progress, spend, asOf, projectStart, plannedEnd }) {
+export function evaluate({ tasks, progress, spend, asOf, projectStart, plannedEnd, crews = [] }) {
   const bac = r2(tasks.reduce((s, t) => s + Number(t.planned_cost_pkr), 0));
   const progressByTask = groupProgress(progress);
   const logDates = [...new Set([...progress.map((p) => p.date), ...spend.map((s) => s.date)])]
@@ -83,6 +84,7 @@ export function evaluate({ tasks, progress, spend, asOf, projectStart, plannedEn
     .sort();
 
   // --- time series: one point per log date, plus the planned S-curve for every calendar day
+  const crewsByDate = Object.fromEntries(crews.map((c) => [c.date, c.crews]));
   const actual = [];
   let prev = { pv: 0, ev: 0, ac: 0 };
   for (const d of logDates) {
@@ -96,6 +98,8 @@ export function evaluate({ tasks, progress, spend, asOf, projectStart, plannedEn
       daily_spend: r2(ac - prev.ac), daily_ev: r2(dEv), daily_pv: r2(dPv),
       productivity: dPv > 0.5 ? r3(dEv / dPv) : null, // planned work existed in this period
       cpi: ac > 0 ? r3(ev / ac) : null,
+      crews: crewsByDate[d] ?? null,
+      ev_per_crew: crewsByDate[d] > 0 ? r2(dEv / crewsByDate[d]) : null,
     });
     prev = { pv, ev, ac };
   }

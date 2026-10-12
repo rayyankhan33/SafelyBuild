@@ -144,16 +144,17 @@ function explainSdi({ sdi, S, D, P, weights, inspectionDays, hasPrev, delta, vio
 /**
  * @param {object|null} sdi    result of computeSdi (or null)
  * @param {object[]} hazards   open hazards with risk_rating
+ * @param {boolean} evidenceGap true when cameras that should be reporting have gone quiet
  */
-export function overallSafety(sdi, hazards) {
+export function overallSafety(sdi, hazards, evidenceGap = false) {
   const open = hazards.filter((h) => h.status !== 'closed');
   const worstRating = open.reduce((m, h) => Math.max(m, h.risk_rating ?? riskRating(h.likelihood, h.severity)), 0);
   const hazardLevel = open.length ? ratingLevel(worstRating) : null;
-  if (!sdi && !open.length) return { status: 'no_data', sdi_level: null, hazard_level: null, worst_rating: 0, open_hazards: 0 };
+  if (!sdi && !open.length) return { status: 'no_data', sdi_level: null, hazard_level: null, worst_rating: 0, open_hazards: 0, evidence_gap: evidenceGap };
   return {
     status: worstOf(sdi?.status, hazardLevel),
     sdi_level: sdi?.status ?? null, hazard_level: hazardLevel,
-    worst_rating: worstRating, open_hazards: open.length,
+    worst_rating: worstRating, open_hazards: open.length, evidence_gap: evidenceGap,
     intolerable: open.filter((h) => alarpZone(h.risk_rating ?? riskRating(h.likelihood, h.severity)) === 'intolerable').length,
   };
 }
@@ -163,4 +164,58 @@ export function matrixCounts(hazards) {
   const grid = Array.from({ length: 5 }, () => Array(5).fill(0));
   for (const h of hazards) if (h.status !== 'closed') grid[h.severity - 1][h.likelihood - 1] += 1;
   return grid; // grid[severity-1][likelihood-1]
+}
+
+// ---------------------------------------------------------------- hazards derived from evidence
+/** A hazard closes only after this many consecutive clean inspection days from the same camera. */
+export const CLEAN_DAYS_TO_CLOSE = 3;
+
+/**
+ * Hazards are a pure projection of the camera evidence. Nobody creates, edits or closes them.
+ *
+ * For each (camera, hazard type) the days are walked in order:
+ *   - a violation-level defect opens a hazard (or raises the open one and resets its clean count);
+ *   - a day on which the same camera was analysed and showed no such defect counts as clean;
+ *   - CLEAN_DAYS_TO_CLOSE consecutive clean days close it;
+ *   - a violation after closure opens a new hazard.
+ * A day with no frames changes nothing: absence of evidence is not evidence of safety.
+ *
+ * @param {object[]} defects  {id, camera_id, defect_type, detected_on, score, severity, is_violation}
+ * @param {{camera_id: string, date: string}[]} inspections every successfully analysed frame
+ * @param {Record<string, object>} libraryByCode hazard_library rows by code
+ */
+export function deriveHazards(defects, inspections, libraryByCode) {
+  const out = [];
+  const keys = new Set(defects.filter((d) => d.is_violation && libraryCodeForDefect(d.defect_type)).map((d) => `${d.camera_id}|${d.defect_type}`));
+  for (const key of keys) {
+    const [cameraId, type] = key.split('|');
+    const lib = libraryByCode[libraryCodeForDefect(type)];
+    if (!lib) continue;
+    const viol = defects.filter((d) => d.camera_id === cameraId && d.defect_type === type && d.is_violation);
+    const inspected = new Set(inspections.filter((i) => i.camera_id === cameraId).map((i) => i.date));
+    const dates = [...new Set([...viol.map((d) => d.detected_on), ...inspected])].sort();
+    let open = null;
+    for (const date of dates) {
+      const today = viol.filter((d) => d.detected_on === date);
+      if (today.length) {
+        const worst = today.reduce((a, b) => (Number(b.score) > Number(a.score) ? b : a));
+        const h = hazardFromDefect(lib, worst);
+        if (!open) {
+          open = { camera_id: cameraId, library_id: lib.id, defect_id: worst.id, source: 'auto_defect', category: lib.category, title: lib.title,
+            likelihood: h.likelihood, severity: h.severity, status: 'open', identified_on: date, closed_on: null, clean_days: 0, last_clean_on: null,
+            notes: h.notes, _score: Number(worst.score) };
+          out.push(open);
+        } else {
+          open.likelihood = Math.max(open.likelihood, h.likelihood);
+          open.clean_days = 0;
+          if (Number(worst.score) > open._score) { open.defect_id = worst.id; open._score = Number(worst.score); open.notes = h.notes; }
+        }
+      } else if (open && inspected.has(date)) {
+        open.clean_days += 1;
+        open.last_clean_on = date;
+        if (open.clean_days >= CLEAN_DAYS_TO_CLOSE) { open.status = 'closed'; open.closed_on = date; open = null; }
+      }
+    }
+  }
+  return out.map(({ _score, ...h }) => h);
 }

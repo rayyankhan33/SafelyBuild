@@ -1,1 +1,10 @@
-ultralytics>=8.1.0  # optional: enables the yolo_world backend (installs torch, ~GBs)
+# Optional pretrained zero-shot backend (YOLO-World). Large: PyTorch plus about 380 MB of model files.
+# Install in this order (ultralytics is installed WITHOUT its opencv-python dependency because
+# opencv-python-headless from requirements.txt already provides cv2 and the two packages conflict):
+#   pip install torch torchvision matplotlib pyyaml pillow scipy requests polars psutil ultralytics-thop
+#   pip install --no-deps ultralytics
+#   pip install git+https://github.com/ultralytics/CLIP.git
+# Model files are never downloaded automatically by this project:
+#   services/inference/models/yolov8s-worldv2.pt   (about 26 MB, github.com/ultralytics/assets releases)
+#   weights/clip/ViT-B-32.pt                        (about 338 MB, fetched by CLIP on first use; git-ignored cache)
+ultralytics>=8.4

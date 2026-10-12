@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, pkr, pkrFull } from '../../api.js';
+import { api, pkr, pkrFull, session } from '../../api.js';
 
 const TYPES = [
   ['footing', 'Footing', ['length_m', 'width_m', 'height_m'], { height_m: 'depth (m)' }],
@@ -20,7 +20,7 @@ export default function Design({ pid, data, reload }) {
   const [f, setF] = useState({ label: '', element_type: 'slab', quantity: 1, concrete_fc_mpa: 25 });
 
   const load = useCallback(async () => {
-    const [e, r] = await Promise.all([api('GET', `/projects/${pid}/elements`), api('GET', `/projects/${pid}/rates`)]);
+    const [e, r] = await Promise.all([api('GET', `/projects/${pid}/elements`), api('GET', '/price-book')]);
     setElements(e.elements); setRates(r.rates);
   }, [pid]);
   useEffect(() => { load(); }, [load]);
@@ -41,8 +41,9 @@ export default function Design({ pid, data, reload }) {
   async function remove(id) {
     try { await api('DELETE', `/projects/${pid}/elements/${id}`); load(); } catch (e) { fail(e); }
   }
-  async function saveRates() {
-    try { await api('PUT', `/projects/${pid}/rates`, Object.fromEntries(Object.entries(rates).map(([k, v]) => [k, Number(v)]))); flash('ok', 'Rates saved. Re-run the estimate to apply them.'); } catch (e) { fail(e); }
+  const isAdmin = session.get().user.role === 'admin';
+  async function savePrices() {
+    try { await api('PUT', '/price-book', Object.fromEntries(Object.entries(rates).map(([k, v]) => [k, Number(v)]))); flash('ok', 'Price book saved. Re-run the estimate to apply it.'); } catch (e) { fail(e); }
   }
   async function runEstimate() {
     try { const r = await api('POST', `/projects/${pid}/estimates`, { contingency_pct: Number(contingency), activate: true }); setEst(r.estimate); flash('ok', `Estimate v${r.estimate.version} created and set as the project budget. Regenerate the schedule so task budgets match.`); reload(); } catch (e) { fail(e); }
@@ -56,7 +57,7 @@ export default function Design({ pid, data, reload }) {
       {msg.text && <div className={msg.type === 'err' ? 'err' : 'ok'} role="status" style={{ marginBottom: 12 }}>{msg.text}</div>}
       <div className="card">
         <h2>Bill of quantities</h2>
-        <p className="small muted">Enter each structural element once with a quantity. Volumes use: footing, column, beam = L × W × H; slab = L × W × thickness; masonry wall = L × H × thickness.</p>
+        <p className="small muted">This is the engineer's input for the initial budget. Enter each structural element once with a quantity, listed in the order it will be built. Volumes use: footing, column, beam = L × W × H; slab = L × W × thickness; masonry wall = L × H × thickness.</p>
         <div className="table-wrap">
           <table>
             <thead><tr><th>Element</th><th>Type</th><th className="num">Qty</th><th>Dimensions (m)</th><th className="num">f′c (MPa)</th><th /></tr></thead>
@@ -89,15 +90,15 @@ export default function Design({ pid, data, reload }) {
 
       <div className="grid cols-2" style={{ marginTop: 16 }}>
         <div className="card">
-          <h2>Material rates (PKR)</h2>
-          <p className="small muted">Demo defaults. Replace with current local rates before relying on the budget.</p>
+          <h2>Price book (PKR)</h2>
+          <p className="small muted">Prices come from a central price book kept by the administrator, not by site staff. Demo values: replace with current local prices before relying on a budget. Each estimate stores the prices it used.</p>
           <div className="grid">
             {MATERIALS.map((m) => (
               <label className="field" key={m}>{m.toLowerCase()} (per {m === 'CEMENT' ? 'bag' : m === 'REBAR' ? 'kg' : m === 'BRICK' ? 'brick' : 'm³'})
-                <input type="number" min={0} step="any" value={rates[m] ?? ''} onChange={(e) => setRates({ ...rates, [m]: e.target.value })} /></label>
+                <input type="number" min={0} step="any" disabled={!isAdmin} value={rates[m] ?? ''} onChange={(e) => setRates({ ...rates, [m]: e.target.value })} /></label>
             ))}
           </div>
-          <button style={{ marginTop: 12 }} onClick={saveRates}>Save rates</button>
+          {isAdmin ? <button style={{ marginTop: 12 }} onClick={savePrices}>Save price book</button> : <p className="tiny">Read-only for engineers.</p>}
         </div>
         <div className="card">
           <h2>Cost estimate</h2>

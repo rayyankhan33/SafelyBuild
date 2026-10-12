@@ -20,7 +20,7 @@ process.env.INFERENCE_TIMEOUT_MS = '3000';
 
 /** Fake inference service. `mode` can be switched per test: ok | down | slow-error | badimage. */
 export function startFakeInference() {
-  const state = { mode: 'ok', calls: [], findings: [] };
+  const state = { mode: 'ok', calls: [], findings: [], stage: 0, fraction: null, items: [] };
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -33,7 +33,8 @@ export function startFakeInference() {
         return send(200, { backend: 'fake', image_size: [640, 480], coverage: 0.2, findings: state.findings });
       }
       if (req.url.startsWith('/v1/activity')) return send(200, { change_ratio: 0.12, scene_similarity: 0.9, alignment_ok: true });
-      if (req.url.startsWith('/v1/materials')) return send(200, { mode: 'simulated', simulated: true, proposals: [{ material_code: 'CEMENT', quantity: 10, unit: 'bag', confidence: 0.5 }], note: 'x' });
+      if (req.url.startsWith('/v1/stage')) return send(200, { backend: 'fake', reliability: 'unvalidated', stage: state.stage, fraction: state.fraction, evidence: {}, model: { backend: 'fake', version: '0' } });
+      if (req.url.startsWith('/v1/inventory')) return send(200, { backend: 'fake', reliability: 'unvalidated', items: state.items, model: { backend: 'fake', version: '0' } });
       if (req.url === '/health') return send(200, { status: 'ok' });
       send(404, {});
     });

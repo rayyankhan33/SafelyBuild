@@ -1,13 +1,13 @@
 """
 pipeline.py - Image analysis used by the FastAPI inference service.
 
-Three analyses are exposed:
+Analyses exposed here:
 
-  * analyze_defects  - rusted rebar / honeycombed concrete (real, OpenCV heuristics
-                       from the POC; optional YOLO-World localisation when installed)
-  * activity_change  - how much a scene changed between two photos (real, OpenCV)
-  * propose_materials- material counts from a photo (NOT implemented in Sprint 1;
-                       see MaterialProvider)
+  * analyze_defects  - rusted rebar / honeycombed concrete (OpenCV heuristics from the POC;
+                       optional YOLO-World localisation when installed)
+  * activity_change  - how much a scene changed between two photos (OpenCV)
+
+Construction stage and material stock live in scene.py (classical) and yolo_scene.py (pretrained).
 
 Nothing here touches a database. The Node API owns persistence.
 """
@@ -197,33 +197,3 @@ def activity_change(prev_bytes: bytes, curr_bytes: bytes) -> dict:
         "scene_similarity": round(similarity, 4),
         "alignment_ok": similarity >= 0.5,
     }
-
-
-# ----------------------------------------------------------------------- materials
-class MaterialProvider:
-    """
-    Sprint 1 limitation (disclosed in docs/tool-disclosure.md and the UI):
-    there is no trained model that counts cement bags, sand piles or rebar bundles.
-
-      * mode "none"      (default) -> returns no proposals; engineers enter quantities.
-      * mode "simulated" (demo)    -> returns clearly flagged simulated proposals so the
-                                      confirm/correct workflow can be demonstrated.
-    """
-
-    def __init__(self, mode: str = "none"):
-        if mode not in ("none", "simulated"):
-            raise ValueError("MATERIAL_PROVIDER must be 'none' or 'simulated'")
-        self.mode = mode
-
-    def propose(self, data: bytes) -> dict:
-        decode_image(data)  # still validate the upload
-        if self.mode == "none":
-            return {"mode": "none", "simulated": False, "proposals": [],
-                    "note": "No material-counting model in Sprint 1; enter quantities manually."}
-        digest = int.from_bytes(data[:8].ljust(8, b"\0"), "big")
-        proposals = [
-            {"material_code": "CEMENT", "quantity": 20 + digest % 30, "unit": "bag", "confidence": 0.5},
-            {"material_code": "SAND", "quantity": round(1.0 + (digest >> 8) % 40 / 10, 1), "unit": "m3", "confidence": 0.4},
-        ]
-        return {"mode": "simulated", "simulated": True, "proposals": proposals,
-                "note": "SIMULATED values for UI demonstration only."}

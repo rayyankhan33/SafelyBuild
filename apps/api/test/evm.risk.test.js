@@ -161,10 +161,17 @@ test('alerts: one per condition, resolved when the condition clears', () => {
   const d1 = desiredAlerts(state);
   assert.equal(d1.length, 1);
   assert.equal(d1[0].level, 'critical');
-  const open = [{ id: 'a1', dedupe_key: 'budget:over_budget' }, { id: 'a2', dedupe_key: 'schedule:behind' }];
+  const open = [{ id: 'a1', dedupe_key: 'budget:over_budget', technical_msg: d1[0].technical_msg, plain_msg: d1[0].plain_msg }, { id: 'a2', dedupe_key: 'schedule:behind' }];
   const diff = diffAlerts(d1, open);
   assert.deepEqual(diff.toCreate, []);
   assert.deepEqual(diff.toResolve, ['a2']);
+  assert.deepEqual(diff.toUpdate, []); // wording unchanged
+});
+test('an open alert is refreshed when its wording changes (new numbers, different cameras)', () => {
+  const d = [{ kind: 'system', level: 'warning', dedupe_key: 'evidence:cameras', technical_msg: 'No recent frames from: A, B.', plain_msg: 'p' }];
+  const diff = diffAlerts(d, [{ id: 'x', dedupe_key: 'evidence:cameras', technical_msg: 'No recent frames from: A.', plain_msg: 'p' }]);
+  assert.deepEqual(diff.toCreate, []);
+  assert.deepEqual(diff.toUpdate, [{ id: 'x', technical_msg: 'No recent frames from: A, B.', plain_msg: 'p' }]);
 });
 test('investor wording has no jargon; engineer wording has indices', () => {
   const b = { status: 'over_budget', eac: 1.2e7, bac: 1e7, overrun: 2e6, overrun_pct: 20, cpi: 0.83, eac_low: 1.1e7, eac_high: 1.3e7 };

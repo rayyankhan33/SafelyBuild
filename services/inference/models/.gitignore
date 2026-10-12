@@ -1,0 +1,8 @@
+# model weights are large and are not committed; active.json (which backend is active) IS committed on purpose
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.bin
+*.engine
+*.ckpt

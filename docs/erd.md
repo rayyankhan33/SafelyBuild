@@ -27,6 +27,21 @@ erDiagram
     jsonb details
     timestamp_with_time_zone created_at
   }
+  cameras {
+    uuid id PK
+    uuid project_id FK
+    text name
+    text kind
+    uuid element_id FK
+    numeric scale_m_per_px
+    text key_hash
+    integer expected_frames_per_day
+    boolean detect_defects
+    boolean active
+    uuid created_by FK
+    timestamp_with_time_zone created_at
+    timestamp_with_time_zone last_frame_at
+  }
   cost_estimates {
     uuid id PK
     uuid project_id FK
@@ -44,10 +59,11 @@ erDiagram
     uuid project_id FK
     date log_date
     uuid author_id FK
-    integer workers_present
-    text weather
-    text notes
     timestamp_with_time_zone created_at
+    integer crews
+    jsonb equipment
+    uuid site_status_by FK
+    timestamp_with_time_zone site_status_at
   }
   defects {
     uuid id PK
@@ -131,6 +147,10 @@ erDiagram
     date identified_on
     uuid created_by FK
     timestamp_with_time_zone created_at
+    uuid camera_id FK
+    integer clean_days
+    date last_clean_on
+    date closed_on
   }
   inference_runs {
     uuid id PK
@@ -142,6 +162,28 @@ erDiagram
     text error
     timestamp_with_time_zone started_at
     timestamp_with_time_zone finished_at
+    text model_version
+    jsonb model_info
+  }
+  inventory_daily {
+    uuid project_id PK
+    date observed_on PK
+    integer material_id PK
+    numeric start_qty
+    numeric stock_qty
+    numeric used_qty
+    numeric delivered_qty
+  }
+  inventory_observations {
+    uuid id PK
+    uuid inference_run_id FK
+    uuid camera_id FK
+    date observed_on
+    integer material_id FK
+    numeric quantity
+    text unit
+    text method
+    numeric confidence
   }
   material_catalog {
     integer id PK
@@ -156,7 +198,7 @@ erDiagram
     numeric quantity
     numeric rate_pkr
     numeric cost_pkr
-    entry_source source
+    text source
     numeric confidence
     uuid media_id FK
     timestamp_with_time_zone created_at
@@ -176,11 +218,20 @@ erDiagram
     timestamp_with_time_zone captured_at
     uuid uploaded_by FK
     timestamp_with_time_zone created_at
+    uuid camera_id FK
+    timestamp_with_time_zone received_at
   }
   organizations {
     uuid id PK
     text name
     timestamp_with_time_zone created_at
+  }
+  price_book {
+    integer material_id PK
+    numeric rate_pkr
+    date effective_from
+    uuid updated_by FK
+    timestamp_with_time_zone updated_at
   }
   productivity_rates {
     element_type element_type PK
@@ -188,12 +239,6 @@ erDiagram
     numeric output_per_day
     integer min_duration_days
     integer sequence_no
-  }
-  project_material_rates {
-    uuid project_id PK
-    integer material_id PK
-    numeric rate_pkr
-    timestamp_with_time_zone updated_at
   }
   project_members {
     uuid project_id PK
@@ -211,6 +256,7 @@ erDiagram
     numeric budget_pkr
     uuid created_by FK
     timestamp_with_time_zone created_at
+    boolean is_demo
   }
   risk_scores {
     uuid id PK
@@ -234,6 +280,17 @@ erDiagram
     date planned_end
     numeric planned_cost_pkr
   }
+  stage_observations {
+    uuid id PK
+    uuid inference_run_id FK
+    uuid camera_id FK
+    uuid element_id FK
+    date observed_on
+    integer stage
+    numeric fraction
+    text backend
+    jsonb evidence
+  }
   standards_refs {
     integer id PK
     text code
@@ -250,6 +307,7 @@ erDiagram
     uuid daily_log_id FK
     uuid task_id FK
     numeric percent_complete
+    text source
   }
   users {
     uuid id PK
@@ -266,10 +324,14 @@ erDiagram
   users |o--o{ alerts : "acknowledged_by"
   projects |o--o{ audit_log : "project_id"
   users |o--o{ audit_log : "user_id"
+  design_elements |o--o{ cameras : "element_id"
+  projects ||--o{ cameras : "project_id"
+  users |o--o{ cameras : "created_by"
   projects ||--o{ cost_estimates : "project_id"
   users |o--o{ cost_estimates : "created_by"
   projects ||--o{ daily_logs : "project_id"
-  users ||--o{ daily_logs : "author_id"
+  users |o--o{ daily_logs : "author_id"
+  users |o--o{ daily_logs : "site_status_by"
   inference_runs ||--o{ defects : "inference_run_id"
   media ||--o{ defects : "media_id"
   projects ||--o{ defects : "project_id"
@@ -280,19 +342,26 @@ erDiagram
   standards_refs |o--o{ estimation_factors : "standard_id"
   projects ||--o{ forecasts : "project_id"
   standards_refs |o--o{ hazard_library : "standard_id"
+  cameras |o--o{ hazards : "camera_id"
   defects |o--o{ hazards : "defect_id"
   hazard_library |o--o{ hazards : "library_id"
   projects ||--o{ hazards : "project_id"
   users |o--o{ hazards : "created_by"
   media ||--o{ inference_runs : "media_id"
+  material_catalog ||--o{ inventory_daily : "material_id"
+  projects ||--o{ inventory_daily : "project_id"
+  cameras ||--o{ inventory_observations : "camera_id"
+  inference_runs ||--o{ inventory_observations : "inference_run_id"
+  material_catalog ||--o{ inventory_observations : "material_id"
   daily_logs ||--o{ material_usage : "daily_log_id"
   material_catalog ||--o{ material_usage : "material_id"
   media |o--o{ material_usage : "media_id"
+  cameras |o--o{ media : "camera_id"
   daily_logs |o--o{ media : "daily_log_id"
   projects ||--o{ media : "project_id"
-  users ||--o{ media : "uploaded_by"
-  material_catalog ||--o{ project_material_rates : "material_id"
-  projects ||--o{ project_material_rates : "project_id"
+  users |o--o{ media : "uploaded_by"
+  material_catalog ||--o{ price_book : "material_id"
+  users |o--o{ price_book : "updated_by"
   projects ||--o{ project_members : "project_id"
   users ||--o{ project_members : "user_id"
   organizations ||--o{ projects : "org_id"
@@ -300,6 +369,9 @@ erDiagram
   projects ||--o{ risk_scores : "project_id"
   design_elements |o--o{ schedule_tasks : "element_id"
   projects ||--o{ schedule_tasks : "project_id"
+  cameras ||--o{ stage_observations : "camera_id"
+  design_elements ||--o{ stage_observations : "element_id"
+  inference_runs ||--o{ stage_observations : "inference_run_id"
   schedule_tasks ||--o{ task_dependencies : "depends_on_id"
   schedule_tasks ||--o{ task_dependencies : "task_id"
   daily_logs ||--o{ task_progress : "daily_log_id"
