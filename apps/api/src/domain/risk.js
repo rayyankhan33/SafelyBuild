@@ -55,7 +55,7 @@ export const ZONE_TEXT = {
 };
 
 // ---------------------------------------------------------------- hazards from defects
-const DEFECT_TO_LIBRARY = { rusted_rebar: 'STR-RUST', honeycombed_concrete: 'STR-HONEY' };
+const DEFECT_TO_LIBRARY = { rusted_rebar: 'STR-RUST', honeycombed_concrete: 'STR-HONEY', concrete_crack: 'STR-CRACK' };
 export const libraryCodeForDefect = (type) => DEFECT_TO_LIBRARY[type] ?? null;
 
 /** Raise likelihood with defect severity: High +1, Critical +2 (capped at 5). */

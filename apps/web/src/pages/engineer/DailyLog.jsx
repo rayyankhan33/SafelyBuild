@@ -112,7 +112,7 @@ export default function DailyLog({ pid, reload }) {
 
       <div className="card" style={{ marginTop: 16 }}>
         <h3>Site photos</h3>
-        <p className="small muted">Photos are analysed for rusted rebar and honeycombed concrete. Use <b>overview</b> for a fixed view of the site (compared with the previous overview to measure activity) and <b>materials</b> for stockpiles.</p>
+        <p className="small muted">Photos are analysed for rusted rebar, honeycombed concrete and cracks. Use <b>overview</b> for a fixed view of the site (compared with the previous overview to measure activity) and <b>materials</b> for stockpiles.</p>
         <div className="row">
           <label className="field">Photo type<select value={tag} onChange={(e) => setTag(e.target.value)}><option value="general">General inspection</option><option value="overview">Site overview</option><option value="material">Materials</option></select></label>
           <label className="field">Choose photos<input type="file" accept="image/jpeg,image/png,image/webp,image/bmp" multiple onChange={upload} disabled={busy} /></label>
@@ -135,7 +135,7 @@ function UploadResult({ u, onUse }) {
       <b>Photo ({u.media.tag})</b>{' '}
       {d.status === 'failed' ? <span className="err">analysis failed: {d.error}. The photo is saved; analysis can be re-run later.</span>
         : d.findings.length === 0 ? <span>no defects found.</span>
-        : <span>{d.findings.length} finding(s) via {d.backend}: {d.findings.slice(0, 4).map((f) => `${f.defect_type.replace('_', ' ')} (${f.severity}, ${Number(f.score).toFixed(2)})`).join('; ')}{d.hazards_updated?.length ? ' — hazards updated.' : ''}</span>}
+        : <span>{d.findings.length} finding(s) via {d.backend}: {d.findings.slice(0, 4).map((f) => `${f.defect_type.replaceAll('_', ' ')} (${f.severity}, ${Number(f.score).toFixed(2)})`).join('; ')}{d.hazards_updated?.length ? ' — hazards updated.' : ''}</span>}
       {a && <div>Activity vs previous overview: {a.status === 'succeeded' ? `${Math.round(a.change_ratio * 100)}% of the scene changed${a.alignment_ok ? '' : ' (viewpoint differs, treat with caution)'}` : a.status === 'skipped' ? a.reason : `failed: ${a.error}`}</div>}
       {m && (m.status === 'failed' ? <div className="err">Material analysis failed: {m.error}</div> : (
         <div>

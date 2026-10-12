@@ -9,6 +9,7 @@ import os
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 
+import crack_model
 import pipeline
 from severity import SEVERITY_LEVELS
 
@@ -30,6 +31,7 @@ def health():
     return {
         "status": "ok",
         "yolo_world_available": pipeline.yolo_available(),
+        "crack_model_available": crack_model.is_available(),
         "material_provider": materials.mode,
     }
 
@@ -37,7 +39,7 @@ def health():
 @app.post("/v1/defects")
 async def defects(
     image: UploadFile = File(...),
-    backend: str = Query("auto", pattern="^(auto|opencv_tiles|yolo_world)$"),
+    backend: str = Query("auto", pattern="^(auto|opencv_tiles|yolo_world|crack_cnn)$"),
     min_violation: str = Query("Medium"),
     confidence: float = Query(0.15, ge=0.01, le=0.95),
 ):

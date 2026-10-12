@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluate, plannedFraction } from '../src/domain/evm.js';
-import { riskRating, alarpZone, computeSdi, overallSafety, hazardFromDefect, matrixCounts, ratingLevel } from '../src/domain/risk.js';
+import { riskRating, alarpZone, computeSdi, overallSafety, hazardFromDefect, libraryCodeForDefect, matrixCounts, ratingLevel } from '../src/domain/risk.js';
 import { desiredAlerts, diffAlerts } from '../src/domain/alerts.js';
 import { pkr, budgetText, scheduleText } from '../src/domain/narrative.js';
 
@@ -108,6 +108,12 @@ test('auto hazard raises likelihood with defect severity but caps at 5', () => {
   assert.equal(hazardFromDefect(lib, { id: 'd', severity: 'Medium', score: 0.2 }).likelihood, 3);
   assert.equal(hazardFromDefect(lib, { id: 'd', severity: 'Critical', score: 0.8 }).likelihood, 5);
   assert.equal(hazardFromDefect({ ...lib, default_likelihood: 5 }, { id: 'd', severity: 'Critical', score: 0.8 }).likelihood, 5);
+});
+test('every defect type the inference service can report maps to a hazard library entry', () => {
+  assert.equal(libraryCodeForDefect('rusted_rebar'), 'STR-RUST');
+  assert.equal(libraryCodeForDefect('honeycombed_concrete'), 'STR-HONEY');
+  assert.equal(libraryCodeForDefect('concrete_crack'), 'STR-CRACK');
+  assert.equal(libraryCodeForDefect('unknown'), null);
 });
 const A = (date, media_id) => ({ date, media_id });
 const D = (detected_on, media_id, score, is_violation = true) => ({ detected_on, media_id, score, is_violation, severity: 'High' });

@@ -17,7 +17,9 @@ after(() => pool.end());
 describe('schema', () => {
   test('docs/erd.md matches the live schema exactly', async () => {
     const file = fileURLToPath(new URL('../../../docs/erd.md', import.meta.url));
-    assert.equal(fs.readFileSync(file, 'utf8'), await buildErd(pool), 'run `npm run docs:erd` and commit docs/erd.md');
+    // git on Windows may check the file out with CRLF endings; the generated text always uses LF
+    const onDisk = fs.readFileSync(file, 'utf8').replaceAll('\r\n', '\n');
+    assert.equal(onDisk, await buildErd(pool), 'run `npm run docs:erd` and commit docs/erd.md');
   });
   test('migrations are idempotent', async () => {
     assert.deepEqual(await migrate(pool), []);

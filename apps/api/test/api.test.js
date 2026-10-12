@@ -320,6 +320,19 @@ describe('photo analysis, hazards, alerts (TC-API-PHOTO)', () => {
     const m = await up(jpeg(), 'material');
     assert.equal(m.body.uploads[0].analysis.materials.proposals[0].material_code, 'CEMENT');
   });
+  test('a crack finding is stored and becomes an Excessive cracking hazard, separate from other defects', async () => {
+    fake.state.mode = 'ok';
+    fake.state.findings = [{ defect_type: 'concrete_crack', score: 0.91, severity: 'High', is_violation: true, bbox: [5, 5, 250, 250], confidence: 0.88, backend: 'crack_cnn' }];
+    const r = await up(jpeg(), 'general');
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.uploads[0].analysis.defects.status, 'succeeded');
+    const stored = (await pool.query("SELECT defect_type, severity FROM defects WHERE project_id = $1 AND defect_type = 'concrete_crack'", [projectId])).rows;
+    assert.equal(stored.length, 1);
+    const dash = (await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.eng })).body;
+    assert.ok(dash.risk.hazards.some((h) => h.title === 'Excessive cracking'));
+    await pool.query("UPDATE hazards SET status = 'closed' WHERE project_id = $1 AND title = 'Excessive cracking'", [projectId]);
+    fake.state.findings = [];
+  });
   test('photos are only served to members of the project', async () => {
     const id = (await pool.query('SELECT id FROM media WHERE project_id = $1 LIMIT 1', [projectId])).rows[0].id;
     const ok = await fetch(`${base}/api/media/${id}/file`, { headers: { authorization: `Bearer ${tokens.inv}` } });
