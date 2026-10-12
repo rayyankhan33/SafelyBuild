@@ -4,7 +4,7 @@
 
 | Tool | Used for | Output reviewed by |
 |---|---|---|
-| Claude Code (Anthropic, model Claude Sonnet 5.5), run inside the Claude desktop app | Drafted the Sprint 1 code in this repository: API, domain functions, database migrations, React pages, inference service wrapper, tests and the documents in `docs/`, under direction from the team | **Team members must read and be able to explain every file they own before the evaluation.** Ownership: see [ownership](#4-ownership-and-walkthrough-guide). |
+| Claude Code (Anthropic, model Claude Sonnet 5.5), run inside the Claude desktop app | Drafted the Sprint 1 code in this repository: API, domain functions, database migrations, React pages, inference service wrapper, tests and the documents in `docs/`, under direction from the team. On 2026-10-12, at Rayyan's request, also wrote the crack-model training, evaluation, video-monitor and integration code (`services/inference/training/*`, `crack_model.py`, `crack_video.py`, migration 003, `docs/crack-model.md`) and ran the training on Rayyan's machine | **Team members must read and be able to explain every file they own before the evaluation.** Ownership: see [ownership](#4-ownership-and-walkthrough-guide). |
 
 What the AI did **not** do: write the research and gap-analysis sections of the report (those must be the team's own work, based on the sources cited in the proposal), decide the product pivot, or choose which standards to follow.
 
@@ -16,6 +16,7 @@ What the AI did **not** do: write the research and gap-analysis sections of the 
 |---|---|---|
 | OpenCV colour/texture heuristics (rust, honeycomb) | Written by the team in the POC (`services/inference/heuristics.py`) | No learned model |
 | YOLO-World `yolov8s-worldv2` (optional) | Ultralytics, downloaded at first use (about 338 MB) | Zero-shot, not fine-tuned; only used if `ultralytics` is installed. Not installed or tested in Sprint 1 on the development machine |
+| Crack CNN (`services/inference/models/crack_cnn.onnx`) | MobileNetV3-Large (torchvision, ImageNet-pretrained weights from download.pytorch.org) fine-tuned on this project's machine with SDNET2018 | Trained in this repository; measured results and limits in [crack-model.md](crack-model.md). Runs locally through OpenCV; PyTorch is a training-time dependency only |
 | Material counting | None | A simulated provider exists for UI demonstration and is labelled "simulated" everywhere |
 
 No external AI service is called at runtime. Photos never leave the machine running the inference service.
@@ -27,9 +28,10 @@ No external AI service is called at runtime. Photos never leave the machine runn
 | API | express, pg, zod, jsonwebtoken, bcryptjs, multer, cors |
 | Web | react, react-dom, react-router-dom, recharts, vite |
 | Inference | fastapi, uvicorn, python-multipart, opencv-python-headless, numpy, pytest, httpx |
+| Training only (`requirements-train.txt`) | torch, torchvision, onnx (onnxruntime was used once as a reference executor to verify the export; it is not a dependency) |
 | Dev database | PostgreSQL 18 binaries via the `embedded-postgres` npm package (the official installer download was blocked on the development machine) |
 | Reference standards | ACI 211.1, ACI 318, ACI 224R, ACI 201.1R, ACI 309R, ISO 31000, IEC 31010, ISO 45001, HSE R2P2, OSHA 29 CFR 1926, ANSI/EIA-748, PMBOK. Numbers transcribed from memory of these documents must be verified against licensed copies (see risk R3) |
-| Datasets | None used yet. Sample photos in `services/inference/samples` are the four images from the POC (source to be recorded by the team) |
+| Datasets | SDNET2018 (Dorafshan, Thomas, Maguire; Utah State University; CC BY 4.0): training and testing of the crack model; six random held-out patches are kept in `services/inference/samples/cracks`. CODEBRIM (bridge defect photographs, Roboflow export, CC BY 4.0): out-of-domain evaluation only, never trained on, not stored in the repo. Sample photos in `services/inference/samples` are the four images from the POC (source to be recorded by the team) |
 
 ## 4. Ownership and walkthrough guide
 

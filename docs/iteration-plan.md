@@ -29,10 +29,13 @@ Owners are **proposed** from the proposal's work division; the team should confi
 | 12 | Demo data generator | Rayyan | Done | `npm run db:reseed` |
 | 13 | Test suite and results log | All | Done (116 tests) | docs/test-results.md |
 | 14 | Docker packaging | Atyab | Written, **not run** | docker-compose.yml |
-| 15 | Measured detection accuracy on labelled data | Hadi | **Not started** (no labelled set) | - |
+| 15 | Measured detection accuracy on labelled data | Hadi | **Partly done: cracks only.** Trained crack model with measured precision/recall on held-out SDNET photographs and an out-of-domain check; rust/honeycomb still unmeasured; no real CCTV footage yet | `services/inference/training/`, docs/crack-model.md, `pytest tests/test_crack.py` |
+| 15b | Crack detection on CCTV footage (video monitor with temporal confirmation) | Rayyan | Built; verified on synthetic clips only | `services/inference/crack_video.py`, `tests/test_crack.py` |
 | 16 | Material counting from photos | Hadi | **Not started** (simulated only) | - |
 | 17 | UI automated tests | Atyab | **Not started** | - |
 | 18 | Mid report text (R&D, gap analysis) | All | **Team to write** | - |
+
+Crack model next step: collect and label 200-500 crops from the real cameras (including crack-free look-alikes) and retrain with `--site-data` (docs/crack-model.md section 6); this is the main lever on false alarms.
 
 Recovery plan for items 15-17: weekly demonstrable milestones in Sprint 2: week 1 collect and label 100 photos; week 2 baseline precision/recall report; week 3 first trained model behind `/v1/defects`; week 4 material count prototype.
 
@@ -42,5 +45,6 @@ Recovery plan for items 15-17: weekly demonstrable milestones in Sprint 2: week 
 |---|---|---|
 | 2026-09-07 | POC committed (Streamlit, YOLO-World zero-shot, heuristics, SQLite) - see `git log` | Team to confirm demo status |
 | 2026-10-11 | Sprint 1 platform built: API, database, inference service, web app, demo data, 116 tests | Yes: `npm run test:all`, demo checklist in test-plan.md |
+| 2026-10-12 | Crack model trained on SDNET2018 (photo-level split), ONNX export, `/v1/defects` crack backend, CCTV video monitor, migration 003; 24 new tests (140 in total) | Yes: `npm run test:all`; `crack_video.py` on a clip (synthetic only, no real CCTV yet) |
 
 Add a row for every claimed milestone with a live-demo confirmation. Do not mark anything done that cannot be shown running.

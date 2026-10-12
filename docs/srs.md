@@ -16,7 +16,7 @@ Version 0.1, Sprint 1. Every requirement has an ID, a verifiable acceptance chec
 | Cost estimation | ACI 211.1 mix design, wastage, bulking/compaction, PKR rates, contingency, ACI 318 steel check | Labour, plant, formwork, overheads; non-ACI mix methods |
 | Financial tracking | Daily material spend from site logs; EVM forecast (EAC, overrun, CPI) | Reading quantities from photos automatically (no model; simulated provider only) |
 | Schedule tracking | Baseline schedule from BOQ; daily % progress; SPI forecast, finish date, days early/late; productivity | Critical-path with parallel tasks; resource levelling; progress from photos |
-| Defect detection | Rusted rebar and honeycombed concrete (OpenCV heuristics; optional YOLO-World) | Trained YOLO model; crack-width measurement |
+| Defect detection | Rusted rebar and honeycombed concrete (OpenCV heuristics; optional YOLO-World); **concrete cracks (trained MobileNetV3 model, photos and CCTV video, [crack-model.md](crack-model.md))** | Trained model for rust/honeycomb; crack-width measurement; crack accuracy on real CCTV footage |
 | Risk | SDI 0-10, risk matrix 5x5, ALARP zones, bow-tie, hazard library, auto hazards from defects | Computer-vision detection of PPE / falls / excavation hazards |
 | Dashboards | Investor (plain language) and engineer (technical) | Mobile apps, push notifications, PDF reports |
 | Platform | REST API, PostgreSQL schema, JWT auth, RBAC, audit log | Cloud deployment, S3 storage (interface ready) |
@@ -55,7 +55,7 @@ Version 0.1, Sprint 1. Every requirement has an ID, a verifiable acceptance chec
 | FR-09 | An engineer records a daily log: workers, weather, notes, cumulative % complete per task and materials used. Dates in the future or before project start are rejected; progress may never decrease over time or exceed a later day's value; unknown tasks are rejected. Re-submitting a day replaces that day's entries. | See tests. | TC-API-LOG |
 | FR-10 | Spend = quantity x rate snapshot at entry time; the dashboard's "spent" equals the sum of logged costs. | 4 days x 5 bags x PKR 1400 = PKR 28,000 on the dashboard. | TC-API-LOG |
 | FR-11 | Photo upload accepts JPEG, PNG, WebP, BMP identified by file content (not the declared type), up to 15 MB each. Other content is rejected. | Script disguised as an image returns 422. | TC-API-PHOTO |
-| FR-12 | Each photo is analysed for rusted rebar and honeycombed concrete; findings (type, score, severity, box, violation flag) are stored. | Findings stored and shown with annotated boxes. | TC-API-PHOTO, inference tests |
+| FR-12 | Each photo is analysed for rusted rebar, honeycombed concrete and cracks (`concrete_crack`, from the trained crack model; it raises the "Excessive cracking" hazard); findings (type, score, severity, box, violation flag) are stored. | Findings stored and shown with annotated boxes. | TC-API-PHOTO, inference tests |
 | FR-13 | Photos tagged "overview" are compared with the previous overview photo to give a scene-change ratio and an alignment check. | Activity result returned; first overview is "skipped". | TC-API-PHOTO, inference tests |
 | FR-14 | Photos tagged "materials" return quantity proposals the engineer must confirm. Sprint 1 has no counting model: default mode returns no proposals; `simulated` mode returns clearly flagged demo values stored with source `ai_simulated`. | Simulated values flagged in API, UI and database. | inference tests |
 | FR-15 | If analysis fails (service down, error, timeout) the photo is still stored, the run is recorded as failed, a system alert is opened, and it is resolved after the next success. | Service down and 500 cases. | TC-API-PHOTO |
@@ -86,7 +86,8 @@ Version 0.1, Sprint 1. Every requirement has an ID, a verifiable acceptance chec
 
 ## 5. Known limitations (stated, not hidden)
 
-1. Defect scores come from colour/texture heuristics tuned on 4 sample images, not a trained model. They produce false positives (soil, bricks, formwork). The tile backend flags many tiles per image; the SDI uses image-level density to limit the effect.
+1. Rust and honeycomb scores come from colour/texture heuristics tuned on 4 sample images, not a trained model. They produce false positives (soil, bricks, formwork). The tile backend flags many tiles per image; the SDI uses image-level density to limit the effect.
+   Crack detection is a trained model (SDNET2018) with measured held-out accuracy (AUC 0.88 on unseen photographs), but it raises many false alarms on photographs unlike SDNET (stains, spalling, textured concrete) and has not been tested on real CCTV footage; severity reflects confidence only, not crack width. See [crack-model.md](crack-model.md) section 5.
 2. No model counts materials from photos. Spend is entered by the engineer; the photo workflow and provenance fields are ready for a model.
 3. Default material rates and productivity values are demonstration placeholders and must be replaced per project.
 4. ACI table values are transcribed for one case (non-air-entrained, slump 75-100 mm, fineness modulus 2.8, max aggregate 19/25/37.5 mm). Verify against a licensed copy of ACI 211.1 and ACI 318 before real use.

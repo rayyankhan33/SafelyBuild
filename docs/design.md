@@ -88,7 +88,7 @@ Errors are always `{ "error": { "code", "message", "details?" } }`: 401 unauthen
 
 | Endpoint | Input | Output |
 |---|---|---|
-| `POST /v1/defects?backend=auto&min_violation=Medium` | `image` | `{backend, image_size, coverage, findings:[{defect_type, score, severity, is_violation, bbox, confidence, backend}]}` |
+| `POST /v1/defects?backend=auto&min_violation=Medium` (backend: auto, opencv_tiles, yolo_world, crack_cnn) | `image` | `{backend, image_size, coverage, findings:[{defect_type, score, severity, is_violation, bbox, confidence, backend}]}` |
 | `POST /v1/activity` | `previous`, `current` | `{change_ratio, scene_similarity, alignment_ok}` |
 | `POST /v1/materials` | `image` | `{mode, simulated, proposals:[{material_code, quantity, unit, confidence}], note}` |
 | `GET /health` | - | status, whether YOLO-World is installed, material provider mode |
@@ -240,7 +240,7 @@ Known gaps: no HTTPS termination (deployment concern), in-memory rate limiter (s
 | Pure domain layer | Logic in routes/SQL | Every figure can be unit-tested against hand calculations |
 | Earned-value method for forecasts | Linear extrapolation of spend | Separates "spent a lot" from "did a lot"; standard (ANSI/EIA-748) so investors' advisers recognise it |
 | BOQ entry first | Parsing drawings | Reliable now; extraction can fill the same table later |
-| Heuristic defect scoring with pluggable backends | Training a model in Sprint 1 | No labelled honeycomb data yet; interface is ready for trained weights |
+| Heuristic defect scoring with pluggable backends | Training a model in Sprint 1 | No labelled honeycomb data yet; interface is ready for trained weights. Cracks are the exception: SDNET2018 provided labelled data, so a MobileNetV3 model was trained and plugged in as backend `crack_cnn` ([crack-model.md](crack-model.md)) |
 | Simulated material proposals flagged everywhere | Faking real detection | A fake that looks real would mislead investors |
 | Generated ERD with drift test | Hand-drawn ERD | Keeps design and code identical |
 | JSONB for snapshots and raw results | Many narrow tables | Shapes vary per analysis; still stored and queryable |
@@ -253,7 +253,7 @@ Known gaps: no HTTPS termination (deployment concern), in-memory rate limiter (s
 | Engineer accountability, blacklist recommendations, council decisions | Removed. PEC number kept as an optional profile field; audit log kept | Not needed for investors |
 | SDI as the score shown to officials | SDI kept for engineers; investors see a 4-level traffic light and one sentence | Non-engineers need meaning, not an index |
 | Risk matrices, ALARP, bow-tie "in mind" | Implemented (FR-20) | Requested to stay |
-| Crack width vs PEC 0.3 mm | Deferred; crack hazard exists as a manual library entry | Needs calibrated imagery and trained model |
+| Crack width vs PEC 0.3 mm | Crack presence is detected by a trained model and raises the "Excessive cracking" hazard; width is still deferred | Needs calibrated imagery; see crack-model.md |
 | Streamlit POC (SQLite) | Moved to `services/inference`; detection code reused, SQLite replaced by PostgreSQL | The POC is now the inference engine |
 | New: cost estimation, financial tracking, schedule tracking | FR-04 to FR-18 | New modules |
 | MERN (MongoDB implied by name) | Express + React + PostgreSQL (as the proposal's stack list states) | Relational data fits money, dates and constraints |

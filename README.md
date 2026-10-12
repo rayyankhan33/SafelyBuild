@@ -2,13 +2,13 @@
 
 Construction progress, cost and safety monitoring for investors and site engineers. Engineers enter the design (bill of quantities), log each day's progress, material use and site photos. The system estimates cost with ACI methods, forecasts final cost and finish date, scores site risk, and shows investors a plain-language dashboard while giving engineers the technical detail.
 
-**Status: Sprint 1 (FYP-1 mid evaluation).** Real working pipeline end to end. Two parts are deliberately simple and disclosed: defect detection uses colour/texture heuristics (no trained model yet), and material counting from photos is not implemented (a clearly labelled simulated provider exists for demos). See [docs/srs.md](docs/srs.md) section 5.
+**Status: Sprint 1 (FYP-1 mid evaluation).** Real working pipeline end to end. Two parts are deliberately simple and disclosed: rust/honeycomb detection uses colour/texture heuristics (no trained model for those yet), and material counting from photos is not implemented (a clearly labelled simulated provider exists for demos). **Crack detection is a trained model** (MobileNetV3 fine-tuned on SDNET2018, with a CCTV video monitor): see [docs/crack-model.md](docs/crack-model.md) for how it was trained, measured accuracy and its limits. See [docs/srs.md](docs/srs.md) section 5.
 
 | | |
 |---|---|
 | Investor view | Progress vs plan, money spent, expected final cost and overrun, expected finish date, site safety light, productivity, alerts, photos, all in plain words |
 | Engineer view | BOQ and estimate (ACI 211.1 / 318), schedule, daily log with photo analysis, SDI breakdown, risk matrix, hazards with category/ALARP zone/bow-tie, standards used, budget and schedule warnings |
-| Stack | React + Vite, Node/Express, PostgreSQL, Python/FastAPI + OpenCV |
+| Stack | React + Vite, Node/Express, PostgreSQL, Python/FastAPI + OpenCV (+ PyTorch only for training) |
 
 ## Quick start
 
@@ -22,8 +22,17 @@ npm run db:seed         # demo project with ~6 weeks of site records
 npm run inference       # terminal 2
 npm run api             # terminal 3
 npm run web             # terminal 4 -> http://localhost:5173
-npm run test:all        # 116 tests, writes docs/test-results.md
+npm run test:all        # all tests, writes docs/test-results.md
 ```
+
+Crack detection on CCTV footage (needs `services/inference/models/crack_cnn.onnx`, included in the repo):
+
+```bash
+cd services/inference
+.venv/Scripts/python crack_video.py --source site_cam.mp4 --every 2 --out annotated.mp4 --events events.json
+```
+
+To retrain the model (CPU is enough, about an hour): `pip install -r requirements-train.txt` then `python training/train_cracks.py --data <SDNET2018 folder>`. Details in [docs/crack-model.md](docs/crack-model.md).
 
 Demo logins (admin, engineer, investor) and the local-only demo password are at the top of `apps/api/src/db/seed.js`.
 
@@ -40,6 +49,7 @@ Demo logins (admin, engineer, investor) and the local-only demo password are at 
 | [docs/iteration-plan.md](docs/iteration-plan.md), [docs/risks.md](docs/risks.md) | Plan, milestone log, risks |
 | [docs/panel-action-register.md](docs/panel-action-register.md) | Panel actions (to be completed by the team) |
 | [docs/rubric-conformance.md](docs/rubric-conformance.md) | Mid-evaluation rubric mapping and pre-evaluation checklist |
+| [docs/crack-model.md](docs/crack-model.md) | Crack model: data, training, measured results, CCTV use, limits |
 | [docs/poc-README.md](docs/poc-README.md) | Original proof of concept description |
 
 ## Layout

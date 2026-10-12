@@ -6,10 +6,10 @@ Results of the latest full run are generated into [test-results.md](test-results
 
 | Level | Tool | What it proves | Count |
 |---|---|---|---|
-| Unit (pure domain) | Node test runner | Formulas against hand-calculated values: dates, ACI mix, estimate, schedule, earned value, SDI, risk matrix, alert rules, wording | 47 |
-| Integration (API + real PostgreSQL + fake inference server) | Node test runner, `fetch` | Auth, RBAC, tenancy, workflows, validation, photo pipeline, failures, audit | 36 |
+| Unit (pure domain) | Node test runner | Formulas against hand-calculated values: dates, ACI mix, estimate, schedule, earned value, SDI, risk matrix, alert rules, wording | 48 |
+| Integration (API + real PostgreSQL + fake inference server) | Node test runner, `fetch` | Auth, RBAC, tenancy, workflows, validation, photo pipeline, failures, audit | 37 |
 | Schema / design consistency | Node test runner | ERD equals live schema, migrations repeatable, DB constraints hold | 11 |
-| Inference service | pytest + FastAPI TestClient, real sample photos | Detection on real images, synthetic edge images, HTTP errors | 22 |
+| Inference service | pytest + FastAPI TestClient, real sample photos | Detection on real images, synthetic edge images, HTTP errors; crack model (stub-model logic, CCTV temporal confirmation, service integration, real-model checks on held-out SDNET patches) | 44 |
 | Manual / demo | Browser | UI behaviour, charts, photos, both roles | see section 4 |
 
 The integration tests use a separate database (`safelybuild_test`) that is wiped each run. The inference server is faked in Node so that failure modes (down, 500) can be forced; the real Python service is tested separately and used in the manual demo.
@@ -53,6 +53,6 @@ These are real findings from building Sprint 1, kept here as evidence of discuss
 ## 5. Gaps (honest)
 
 - No automated browser (UI) tests; the front end is verified manually.
-- Defect-detection accuracy has not been measured against labelled data; heuristics were tuned on 4 images. A labelled evaluation set is a Sprint 2 task.
+- Rust and honeycomb accuracy has not been measured against labelled data; heuristics were tuned on 4 images. A labelled evaluation set is a Sprint 2 task. Crack accuracy is measured on held-out SDNET photographs and an 18-image CODEBRIM check ([crack-model.md](crack-model.md)); there is no test on real CCTV footage.
 - Docker compose files exist but were not run (Docker not installed on the development machine).
 - Load testing beyond one project with 36 days of data has not been done.
