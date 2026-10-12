@@ -1,0 +1,390 @@
+{
+  "name": "crack_cnn",
+  "task": "crack / no-crack classification of a square surface patch",
+  "architecture": "mobilenet_v3_large",
+  "input": {
+    "size": 224,
+    "color": "RGB",
+    "range": "0..1",
+    "layout": "NCHW",
+    "normalisation": "ImageNet mean/std inside the graph"
+  },
+  "output": "probability that the patch contains a crack",
+  "threshold": 0.91,
+  "training": {
+    "dataset": "SDNET2018 (CC BY 4.0, Utah State University)",
+    "split": "per photograph, seed 42",
+    "epochs": 8,
+    "best_epoch": 3,
+    "batch": 32,
+    "lr": 0.0004,
+    "pretrained": true,
+    "split_sizes": {
+      "train": {
+        "patches": 2540,
+        "cracked": 1464,
+        "non_cracked": 1076,
+        "photos": 37,
+        "photos_with_non_cracked": 7
+      },
+      "val": {
+        "patches": 820,
+        "cracked": 372,
+        "non_cracked": 448,
+        "photos": 9,
+        "photos_with_non_cracked": 3
+      },
+      "test": {
+        "patches": 956,
+        "cracked": 320,
+        "non_cracked": 636,
+        "photos": 9,
+        "photos_with_non_cracked": 3
+      }
+    },
+    "history": [
+      {
+        "epoch": 1,
+        "train_loss": 0.5101,
+        "val_auc": 0.8698,
+        "val_f1": 0.7988,
+        "val_threshold": 0.67,
+        "seconds": 395
+      },
+      {
+        "epoch": 2,
+        "train_loss": 0.3973,
+        "val_auc": 0.885,
+        "val_f1": 0.8064,
+        "val_threshold": 0.51,
+        "seconds": 390
+      },
+      {
+        "epoch": 3,
+        "train_loss": 0.3541,
+        "val_auc": 0.9122,
+        "val_f1": 0.8384,
+        "val_threshold": 0.87,
+        "seconds": 385
+      },
+      {
+        "epoch": 4,
+        "train_loss": 0.3263,
+        "val_auc": 0.9068,
+        "val_f1": 0.8317,
+        "val_threshold": 0.87,
+        "seconds": 372
+      },
+      {
+        "epoch": 5,
+        "train_loss": 0.3089,
+        "val_auc": 0.8758,
+        "val_f1": 0.8036,
+        "val_threshold": 0.62,
+        "seconds": 386
+      },
+      {
+        "epoch": 6,
+        "train_loss": 0.2925,
+        "val_auc": 0.9003,
+        "val_f1": 0.8235,
+        "val_threshold": 0.66,
+        "seconds": 372
+      },
+      {
+        "epoch": 7,
+        "train_loss": 0.2892,
+        "val_auc": 0.9051,
+        "val_f1": 0.8319,
+        "val_threshold": 0.65,
+        "seconds": 350
+      },
+      {
+        "epoch": 8,
+        "train_loss": 0.27,
+        "val_auc": 0.9059,
+        "val_f1": 0.8304,
+        "val_threshold": 0.63,
+        "seconds": 348
+      }
+    ]
+  },
+  "metrics": {
+    "val": {
+      "accuracy": 0.8646,
+      "precision": 0.9143,
+      "recall": 0.7742,
+      "specificity": 0.9397,
+      "f1": 0.8384,
+      "threshold": 0.87,
+      "tp": 288,
+      "fp": 27,
+      "tn": 421,
+      "fn": 84,
+      "auc": 0.9122
+    },
+    "test": {
+      "accuracy": 0.8264,
+      "precision": 0.7655,
+      "recall": 0.6937,
+      "specificity": 0.8931,
+      "f1": 0.7279,
+      "threshold": 0.87,
+      "tp": 222,
+      "fp": 68,
+      "tn": 568,
+      "fn": 98,
+      "auc": 0.879
+    },
+    "test_at_0.5": {
+      "accuracy": 0.727,
+      "precision": 0.5601,
+      "recall": 0.8594,
+      "specificity": 0.6604,
+      "f1": 0.6782,
+      "threshold": 0.5,
+      "tp": 275,
+      "fp": 216,
+      "tn": 420,
+      "fn": 45,
+      "auc": 0.879
+    },
+    "test_by_surface": {
+      "Decks": {
+        "accuracy": 0.7591,
+        "precision": 0.6344,
+        "recall": 0.5673,
+        "specificity": 0.8482,
+        "f1": 0.599,
+        "threshold": 0.87,
+        "tp": 59,
+        "fp": 34,
+        "tn": 190,
+        "fn": 45,
+        "auc": 0.7516
+      },
+      "Pavements": {
+        "accuracy": 0.9258,
+        "precision": 0.9419,
+        "recall": 0.8182,
+        "specificity": 0.9763,
+        "f1": 0.8757,
+        "threshold": 0.87,
+        "tp": 81,
+        "fp": 5,
+        "tn": 206,
+        "fn": 18,
+        "auc": 0.9756
+      },
+      "Walls": {
+        "accuracy": 0.7987,
+        "precision": 0.7387,
+        "recall": 0.7009,
+        "specificity": 0.8557,
+        "f1": 0.7193,
+        "threshold": 0.87,
+        "tp": 82,
+        "fp": 29,
+        "tn": 172,
+        "fn": 35,
+        "auc": 0.8595
+      }
+    },
+    "test_fully_labelled_photos_only": {
+      "accuracy": 0.8686,
+      "precision": 0.5177,
+      "recall": 0.7157,
+      "specificity": 0.8931,
+      "f1": 0.6008,
+      "threshold": 0.87,
+      "tp": 73,
+      "fp": 68,
+      "tn": 568,
+      "fn": 29,
+      "auc": 0.8844
+    },
+    "test_degraded": {
+      "lowres": {
+        "accuracy": 0.8431,
+        "precision": 0.8172,
+        "recall": 0.6844,
+        "specificity": 0.923,
+        "f1": 0.7449,
+        "threshold": 0.87,
+        "tp": 219,
+        "fp": 49,
+        "tn": 587,
+        "fn": 101,
+        "auc": 0.8854
+      },
+      "jpeg": {
+        "accuracy": 0.8117,
+        "precision": 0.7318,
+        "recall": 0.6906,
+        "specificity": 0.8726,
+        "f1": 0.7106,
+        "threshold": 0.87,
+        "tp": 221,
+        "fp": 81,
+        "tn": 555,
+        "fn": 99,
+        "auc": 0.8595
+      },
+      "dark_noisy": {
+        "accuracy": 0.8274,
+        "precision": 0.7992,
+        "recall": 0.6469,
+        "specificity": 0.9182,
+        "f1": 0.715,
+        "threshold": 0.87,
+        "tp": 207,
+        "fp": 52,
+        "tn": 584,
+        "fn": 113,
+        "auc": 0.8297
+      }
+    }
+  },
+  "onnx_vs_torch_max_abs_diff": 0.22001,
+  "metrics_runtime": {
+    "note": "measured with OpenCV + cv2.INTER_AREA (the service's code path) on photographs never used for training",
+    "threshold_rule": "smallest threshold with specificity >= 0.95 on the validation photographs",
+    "threshold_from_validation": 0.91,
+    "val_auc": 0.9118,
+    "test_auc": 0.8789,
+    "test_at_validation_threshold": {
+      "accuracy": 0.8368,
+      "precision": 0.8254,
+      "recall": 0.65,
+      "specificity": 0.9308,
+      "f1": 0.7273,
+      "threshold": 0.91,
+      "tp": 208,
+      "fp": 44,
+      "tn": 592,
+      "fn": 112,
+      "auc": 0.8789
+    },
+    "test_by_surface": {
+      "Decks": {
+        "accuracy": 0.7866,
+        "precision": 0.7297,
+        "recall": 0.5192,
+        "specificity": 0.9107,
+        "f1": 0.6067,
+        "threshold": 0.91,
+        "tp": 54,
+        "fp": 20,
+        "tn": 204,
+        "fn": 50,
+        "auc": 0.7489
+      },
+      "Pavements": {
+        "accuracy": 0.9161,
+        "precision": 0.9398,
+        "recall": 0.7879,
+        "specificity": 0.9763,
+        "f1": 0.8571,
+        "threshold": 0.91,
+        "tp": 78,
+        "fp": 5,
+        "tn": 206,
+        "fn": 21,
+        "auc": 0.9758
+      },
+      "Walls": {
+        "accuracy": 0.8113,
+        "precision": 0.8,
+        "recall": 0.6496,
+        "specificity": 0.9055,
+        "f1": 0.717,
+        "threshold": 0.91,
+        "tp": 76,
+        "fp": 19,
+        "tn": 182,
+        "fn": 41,
+        "auc": 0.8613
+      }
+    },
+    "operating_points": {
+      "0.3": {
+        "accuracy": 0.6213,
+        "precision": 0.4673,
+        "recall": 0.9375,
+        "specificity": 0.4623,
+        "f1": 0.6237,
+        "threshold": 0.3,
+        "tp": 300,
+        "fp": 342,
+        "tn": 294,
+        "fn": 20,
+        "auc": 0.8789
+      },
+      "0.5": {
+        "accuracy": 0.7374,
+        "precision": 0.5717,
+        "recall": 0.8594,
+        "specificity": 0.6761,
+        "f1": 0.6866,
+        "threshold": 0.5,
+        "tp": 275,
+        "fp": 206,
+        "tn": 430,
+        "fn": 45,
+        "auc": 0.8789
+      },
+      "0.7": {
+        "accuracy": 0.8002,
+        "precision": 0.6711,
+        "recall": 0.7906,
+        "specificity": 0.805,
+        "f1": 0.726,
+        "threshold": 0.7,
+        "tp": 253,
+        "fp": 124,
+        "tn": 512,
+        "fn": 67,
+        "auc": 0.8789
+      },
+      "0.8": {
+        "accuracy": 0.8243,
+        "precision": 0.736,
+        "recall": 0.7406,
+        "specificity": 0.8664,
+        "f1": 0.7383,
+        "threshold": 0.8,
+        "tp": 237,
+        "fp": 85,
+        "tn": 551,
+        "fn": 83,
+        "auc": 0.8789
+      },
+      "0.9": {
+        "accuracy": 0.8326,
+        "precision": 0.8101,
+        "recall": 0.6531,
+        "specificity": 0.923,
+        "f1": 0.7232,
+        "threshold": 0.9,
+        "tp": 209,
+        "fp": 49,
+        "tn": 587,
+        "fn": 111,
+        "auc": 0.8789
+      },
+      "0.95": {
+        "accuracy": 0.8347,
+        "precision": 0.8522,
+        "recall": 0.6125,
+        "specificity": 0.9465,
+        "f1": 0.7127,
+        "threshold": 0.95,
+        "tp": 196,
+        "fp": 34,
+        "tn": 602,
+        "fn": 124,
+        "auc": 0.8789
+      }
+    }
+  }
+}

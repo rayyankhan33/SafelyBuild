@@ -1,0 +1,5 @@
+# Only needed to (re)train the crack model: pip install -r requirements.txt -r requirements-train.txt
+# CPU build of PyTorch (Windows/Linux):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+torch>=2.5
+torchvision>=0.20
+onnx>=1.16
