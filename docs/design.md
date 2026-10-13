@@ -1,28 +1,38 @@
-# SafelyBuild - Design (Sprint 1)
+# SafelyBuild - Design
 
-Everything in this document describes the code as it is in the repository. The ER diagram is generated from the live database ([erd.md](erd.md)) and a test fails if it drifts. Diagrams use Mermaid and render on GitHub.
+Describes the code as it is in the repository. The ER diagram is generated from the live database ([erd.md](erd.md)) and a test fails if it drifts. Diagrams use Mermaid and render on GitHub.
 
 ## 1. Architecture
 
 ```mermaid
 flowchart LR
+  CAM["Site cameras<br/>(zone, yard, overview)"]
   subgraph Browser
     W[React web app<br/>apps/web]
   end
   subgraph Node["Node.js (apps/api)"]
-    R[Routes<br/>auth, projects]
-    S[Services<br/>projects, media, forecast]
+    I[Ingest route<br/>camera-key auth]
+    R[User routes<br/>JWT auth, RBAC]
+    S[Services<br/>ingest, rollup, forecast, projects]
     D[Domain<br/>pure functions]
+    I --> S
     R --> S --> D
   end
   PG[(PostgreSQL)]
-  FS[(Photo storage<br/>local disk, S3-ready)]
+  FS[(Frame storage<br/>local disk, S3-ready)]
   subgraph Py["Python (services/inference)"]
     F[FastAPI service.py]
-    P[pipeline.py<br/>OpenCV heuristics]
-    F --> P
+    REG[registry.py<br/>pluggable backends]
+    B1[classical_color<br/>opencv_tiles]
+    B2[yolo_world<br/>optional]
+    B3[plugins/*<br/>trained model]
+    F --> REG
+    REG --> B1
+    REG --> B2
+    REG --> B3
   end
-  W -- "REST + JWT /api" --> R
+  CAM -- "POST frame + x-camera-key" --> I
+  W -- "REST + JWT" --> R
   S -- SQL --> PG
   S -- put/read --> FS
   S -- "HTTP multipart /v1/*" --> F
@@ -32,68 +42,72 @@ flowchart LR
 
 | Layer | Folder | Rule |
 |---|---|---|
-| Presentation | `apps/web/src` | Renders what the API returns. No business rules, no hard-coded figures. |
-| HTTP | `apps/api/src/routes`, `http.js` | Validation (zod), authentication, RBAC, audit. No arithmetic. |
-| Services | `apps/api/src/services` | Combine SQL with domain functions inside transactions. |
+| Presentation | `apps/web/src` | Renders what the API returns. No business rules, no hard-coded figures, no evidence entry forms. |
+| HTTP | `apps/api/src/routes`, `http.js` | Validation (zod, strict), authentication, RBAC, audit. No arithmetic. |
+| Services | `apps/api/src/services` | Combine SQL with domain functions inside transactions. `rollup.js` replays observations into figures. |
 | Domain | `apps/api/src/domain` | Pure functions: no database, no clock (dates are passed in). Every formula lives here and is unit-tested. |
-| Inference | `services/inference` | Stateless: image bytes in, findings out. Never touches the database. |
+| Inference | `services/inference` | Stateless: image in, measurement out. Backends are plug-ins behind one registry. Never touches the database. |
 | Data | `db/migrations` | The only place the schema is defined. |
 
 ## 2. Components and dependencies
 
 | Component | File | Responsibility | Depends on |
 |---|---|---|---|
-| ACI mix design | `domain/aci211.js` | f'cr, w/c, water, cement, coarse and fine aggregate per m3 | none |
-| Estimation | `domain/estimation.js` | BOQ to quantities and PKR cost, ACI 318 steel check | aci211 |
+| ACI mix design | `domain/aci211.js` | f'cr, w/c, water, cement, aggregates per m3 | none |
+| Estimation | `domain/estimation.js` | BOQ to quantities and PKR, ACI 318 steel check | aci211 |
 | Schedule generator | `domain/schedule.js` | Tasks, dates, budgets | estimation, dates |
-| Earned value | `domain/evm.js` | PV/EV/AC, CPI/SPI, forecasts, series, productivity | dates |
-| Risk | `domain/risk.js` | Matrix, ALARP, SDI, hazards from defects, overall safety | dates |
-| Narrative | `domain/narrative.js` | Plain and technical wording, PKR formatting | none |
-| Alert rules | `domain/alerts.js` | Which alerts should be open; diff vs open | narrative |
-| Project service | `services/projects.js` | Projects, rates, estimate, schedule, daily logs | domain, db |
-| Media service | `services/media.js` | Upload, storage, inference calls, defects, hazards, system alerts | inference.js, storage.js, risk |
-| Forecast service | `services/forecast.js` | Recompute forecast, SDI, alerts; build both dashboard payloads | domain, db |
-| Inference client | `inference.js` | HTTP client with timeouts and typed errors | config |
-| Storage | `storage.js` | `put` / `read` by key, magic-byte sniffing, path-traversal guard | config |
-| Inference service | `services/inference/service.py`, `pipeline.py` | `/v1/defects`, `/v1/activity`, `/v1/materials`, `/health` | heuristics.py, severity.py |
+| Stages | `domain/stages.js` | Visible stage to % complete; frame agreement; ratchet | none |
+| Inventory | `domain/inventory.js` | Start/end-of-day stock to consumption and deliveries | none |
+| Earned value | `domain/evm.js` | PV/EV/AC, CPI/SPI, forecasts, series | dates |
+| Risk | `domain/risk.js` | Matrix, ALARP, SDI, hazards derived from evidence | dates |
+| Evidence health | `domain/evidence.js` | Overdue cameras, uncovered tasks | dates |
+| Alerts, wording | `domain/alerts.js`, `narrative.js` | Which alerts are open; plain and technical text | evidence, narrative |
+| Ingest service | `services/ingest.js` | Camera keys, frame checks, storage, analysis dispatch | inference.js, storage.js |
+| Roll-up | `services/rollup.js` | Replay observations into progress, stock, spend, hazards | domain |
+| Forecast service | `services/forecast.js` | Recompute forecast, SDI, alerts; build both dashboards | domain |
+| Project service | `services/projects.js` | Projects, price book, estimate, schedule, site status | domain |
+| Inference registry | `registry.py` | Backends per task, selection, model stamp | none |
+| Analysis backends | `scene.py`, `pipeline.py`, `yolo_scene.py`, `plugins/` | stage, inventory, defects | OpenCV, optional torch |
+| Evaluation | `evaluate.py` | Measure any backend on labelled images | registry |
 
 ## 3. Interface contracts
 
-### 3.1 REST API (all under `/api`, JSON, `Authorization: Bearer <token>`)
+### 3.1 REST API (`/api`, JSON; user routes use `Authorization: Bearer <token>`)
 
-| Method and path | Roles | Purpose |
+| Method and path | Who | Purpose |
 |---|---|---|
-| `POST /auth/login` | public | email, password to token and user |
-| `GET /auth/me` | any | current user |
-| `POST /users`, `GET /users` | admin | manage users |
-| `GET /projects`, `POST /projects` | any / admin, engineer | list accessible projects / create |
-| `GET /projects/:pid` | member | project |
-| `GET/POST /projects/:pid/members` | admin / staff | membership |
-| `GET/PUT /projects/:pid/rates` | staff | material rates in PKR |
-| `GET/POST/DELETE /projects/:pid/elements[/:eid]` | staff | BOQ |
-| `POST /projects/:pid/estimates`, `GET .../estimates/active` | staff | create/activate and read the estimate |
-| `POST /projects/:pid/schedule/generate`, `GET .../schedule` | staff / member | baseline schedule |
-| `PUT /projects/:pid/logs/:date`, `GET .../logs`, `GET .../logs/:date` | staff / member | daily log (progress, materials) |
-| `POST /projects/:pid/logs/:date/media` | staff | upload photos (multipart `files`, field `tag`) |
-| `GET /media/:id/file` | member | photo bytes |
-| `GET /hazard-library`, `POST /projects/:pid/hazards`, `PATCH .../hazards/:hid` | any / staff | hazards |
-| `GET /projects/:pid/dashboard` | member | investor payload for investors; engineer payload for staff |
-| `POST /projects/:pid/alerts/:aid/ack` | staff | acknowledge alert |
-| `GET /projects/:pid/audit` | staff | audit trail |
+| `POST /ingest/frame` | **camera key** (`x-camera-key`) | multipart `image`, `captured_at`; the only way frames enter |
+| `POST /auth/login`, `GET /auth/me` | public / any | sign-in |
+| `POST/GET /users` | admin | users |
+| `GET/POST /projects`, `GET /projects/:pid` | member / engineer, admin | projects |
+| `POST/GET /projects/:pid/members` | admin / staff | membership |
+| `GET /price-book`, `PUT /price-book` | any / **admin** | material prices (PKR) |
+| `GET/POST/DELETE /projects/:pid/elements` | engineer, admin | BOQ (initial budget input) |
+| `POST /projects/:pid/estimates`, `GET .../estimates/active` | engineer, admin | estimate and budget |
+| `POST /projects/:pid/schedule/generate`, `GET .../schedule` | engineer, admin / member | baseline schedule; measured % per task |
+| `PUT /projects/:pid/site-status/:date`, `GET .../site-status` | engineer, admin | **crews and equipment only** |
+| `GET/POST /projects/:pid/cameras`, `PATCH .../cameras/:cid` | staff / **admin** / **admin** | camera registry |
+| `GET /media/:id/file` | member | frame bytes |
+| `GET /projects/:pid/dashboard` | member | investor payload for investors, engineer payload for staff |
+| `POST /projects/:pid/alerts/:aid/ack`, `GET .../audit` | staff | acknowledge alert; audit trail |
 | `GET /health` | public | database and inference status |
 
-Errors are always `{ "error": { "code", "message", "details?" } }`: 401 unauthenticated, 403 forbidden, 404 not found (also for other tenants), 409 conflict, 422 validation, 429 rate limited.
+**Deliberately absent:** any route to create or change progress, material use, spend, defects, hazards or frames. Tests assert that the old Sprint 1 routes return 404 for every role.
 
-### 3.2 Inference service (HTTP, multipart)
+Errors: `{ "error": { "code", "message", "details?" } }` with 401, 403, 404 (also for other tenants), 409, 422, 429.
 
-| Endpoint | Input | Output |
+### 3.2 Inference service (HTTP, multipart; see [model-integration.md](model-integration.md))
+
+| Endpoint | Input | Output (all stamped with `model`) |
 |---|---|---|
-| `POST /v1/defects?backend=auto&min_violation=Medium` (backend: auto, opencv_tiles, yolo_world, crack_cnn) | `image` | `{backend, image_size, coverage, findings:[{defect_type, score, severity, is_violation, bbox, confidence, backend}]}` |
+| `POST /v1/defects?backend=&min_violation=` | `image` | `{backend, image_size, findings[], coverage}` |
+| `POST /v1/stage?element_type=&backend=` | `image` | `{stage, fraction, evidence, backend, reliability}` |
+| `POST /v1/inventory?scale_m_per_px=&backend=` | `image` | `{items:[{material_code, quantity, unit, method, confidence}]}` |
 | `POST /v1/activity` | `previous`, `current` | `{change_ratio, scene_similarity, alignment_ok}` |
-| `POST /v1/materials` | `image` | `{mode, simulated, proposals:[{material_code, quantity, unit, confidence}], note}` |
-| `GET /health` | - | status, whether YOLO-World is installed, material provider mode |
+| `GET /v1/backends`, `GET /health` | - | active backend per task, all backends and their availability |
+| `POST /v1/demo/frame` | form | synthetic frame; **only when `ENABLE_DEMO_FRAMES=1`** |
 
-Failures: 422 for undecodable or tiny images, 413 above 15 MB, 501 if a requested backend is not installed. The Node client treats any failure as a recorded failed run (FR-15).
+`model` is `{backend, version, source, reliability, weights_sha256?, ...}`. Failures: 422 bad image or parameters, 413 too large, 501 backend missing/unavailable/not serving the task.
 
 ## 4. Data design
 
@@ -101,53 +115,56 @@ The full schema is in [erd.md](erd.md) (generated). Groups:
 
 | Group | Tables | Notes |
 |---|---|---|
-| Tenancy | `organizations`, `users`, `projects`, `project_members` | Roles `admin`, `engineer`, `investor`; optional PEC number on users. |
-| Reference | `standards_refs`, `material_catalog`, `estimation_factors`, `productivity_rates`, `hazard_library` | Every factor records whether it is code-mandated or an editable allowance, and which standard it comes from. |
-| Design and cost | `design_elements`, `project_material_rates`, `cost_estimates`, `estimate_lines` | Estimates are versioned and store the exact factors and rates used (`factors_snapshot`). |
-| Schedule | `schedule_tasks`, `task_dependencies` | Task budget (`planned_cost_pkr`) sums to the active estimate. |
-| Logs (the log store) | `daily_logs`, `task_progress`, `material_usage`, `media`, `inference_runs` | One log per project-day. Progress is cumulative per task. Spend rows keep a rate snapshot and a source (`manual`, `ai_confirmed`, `ai_simulated`). Raw inference responses are kept as JSONB for traceability. |
-| Findings and risk | `defects`, `hazards`, `risk_scores` | `hazards.risk_rating` is a generated column (likelihood x severity). |
-| Outputs | `forecasts`, `alerts`, `audit_log` | Forecast snapshots per date give the trend history. One open alert per (project, key) is enforced by a partial unique index. |
+| Tenancy | `organizations`, `users`, `projects` (`is_demo`), `project_members` | Roles `admin`, `engineer`, `investor`. |
+| Reference | `standards_refs`, `material_catalog`, `estimation_factors`, `productivity_rates`, `hazard_library`, **`price_book`** | Every factor records whether it is code-mandated or an allowance and where it comes from. Prices are global and admin-maintained. |
+| Design and cost | `design_elements`, `cost_estimates`, `estimate_lines` | Estimates are versioned and store the factors and prices they used. |
+| Schedule | `schedule_tasks`, `task_dependencies` | Task budgets sum to the active estimate. |
+| **Cameras and frames** | `cameras` (kind, element, scale, `key_hash`, `detect_defects`, `last_frame_at`), `media` (`camera_id`, `captured_at`, `received_at`, `sha256`) | Unique `(camera_id, sha256)` blocks replays. |
+| **Raw observations** | `inference_runs` (with `model_version`, `model_info`, raw `result` JSONB), `stage_observations`, `inventory_observations`, `defects` | Append-only evidence from analyses. |
+| **Derived (rebuilt from observations)** | `task_progress`, `inventory_daily`, `material_usage`, `hazards`, `risk_scores`, `forecasts`, `alerts` | `task_progress.source` is `image_stage`; `material_usage.source` is `image_estimate`; hazards must be `auto_defect`. |
+| Engineer inputs | `daily_logs` (`crews`, `equipment`), BOQ tables | The `daily_logs` row exists for every day with frames; crews/equipment are the only fields a person fills. |
+| Audit | `audit_log` | Append-only; camera ingests record `user_id = NULL`. |
 
 **Storage of the different data types**
 
 | Data | Where | Why |
 |---|---|---|
 | Structured records, money, dates | PostgreSQL columns (NUMERIC for money, DATE for days) | Constraints and queries |
-| Variable-shaped results (inference response, forecast metrics, estimate snapshot, bow-tie lists) | JSONB | Shape differs by analysis; still queryable |
-| Photos | Object storage by key; DB keeps key, SHA-256, size, type, optional GPS | Keeps the database small; hash proves the file was not changed |
+| Variable-shaped results (raw model output, forecast metrics, estimate snapshot, bow-tie lists, equipment lists) | JSONB | Shape differs by model/analysis; still queryable |
+| Frames | Object storage by key; DB keeps key, SHA-256, size, type, camera, capture and receive times | Small database; the hash shows the file was not altered |
 | Audit | Append-only table | Traceability |
 
 ## 5. Behaviour
 
-### 5.1 Daily log and photo flow
+### 5.1 A frame becomes figures
 
 ```mermaid
 sequenceDiagram
-  actor E as Site engineer
-  participant W as Web app
-  participant A as API
+  participant C as Camera
+  participant A as API (ingest)
   participant I as Inference service
   participant DB as PostgreSQL
-  E->>W: choose photos, tag "general"
-  W->>A: POST /logs/:date/media (multipart)
-  A->>A: sniff file type, check dates
-  A->>DB: ensure daily_log, store file, insert media
-  A->>I: POST /v1/defects
-  alt service answers
-    I-->>A: findings
-    A->>DB: inference_run (succeeded), defects, hazards (create or raise)
-    A->>DB: resolve system alert
-  else down, timeout or error
-    A->>DB: inference_run (failed), open system alert
+  C->>A: POST frame + x-camera-key + captured_at
+  A->>A: key hash match? image type? clock within 10 min?
+  A->>DB: store frame (unique camera+hash), update last_frame_at
+  alt zone camera
+    A->>I: /v1/stage (element type)
+    I-->>A: stage, pour coverage, model stamp
+    A->>DB: stage_observation + inference_run(model_version)
+  else yard camera
+    A->>I: /v1/inventory (ground scale)
+    I-->>A: stock per material, model stamp
+    A->>DB: inventory_observations
   end
+  opt camera flagged for defect checks
+    A->>I: /v1/defects
+    A->>DB: defects
+  end
+  alt service down or error
+    A->>DB: failed run + system alert (frame kept)
+  end
+  A->>DB: rollup: replay progress, stock, spend, hazards
   A->>DB: recompute forecast, SDI, alerts
-  A-->>W: uploads + analysis + safety status
-  E->>W: enter progress and materials, Save
-  W->>A: PUT /logs/:date
-  A->>DB: validate, replace entries in one transaction
-  A->>DB: recompute forecast, SDI, alerts
-  A-->>W: saved + budget/schedule/safety status
 ```
 
 ### 5.2 Dashboard request
@@ -159,101 +176,133 @@ sequenceDiagram
   participant DB as PostgreSQL
   W->>A: GET /projects/:pid/dashboard
   A->>A: authenticate, check membership
-  A->>DB: load tasks, progress, spend, defects, hazards
-  A->>A: evaluate (EVM), computeSdi, overallSafety
+  A->>DB: load tasks, progress, spend, defects, hazards, cameras, crews
+  A->>A: evaluate (EVM), computeSdi, evidence health, overallSafety
   A->>DB: upsert forecast, risk score; open/resolve alerts
-  alt role is investor
-    A-->>W: headline, plain text, series, alerts, photos
+  alt investor
+    A-->>W: headline, plain text, series, evidence note, alerts, photos
   else engineer or admin
-    A-->>W: same + indices, SDI breakdown, matrix, hazards, estimate, standards
+    A-->>W: same + indices, SDI breakdown, matrix, hazards, estimate, stock, crews, camera health, latest frames
   end
 ```
 
-### 5.3 Alert and hazard states
+### 5.3 Hazard lifecycle (automatic only)
 
 ```mermaid
 stateDiagram-v2
-  [*] --> AlertOpen: condition becomes true
-  AlertOpen --> AlertOpen: recompute (same key, no duplicate)
-  AlertOpen --> AlertResolved: condition clears
-  AlertResolved --> AlertOpen: condition returns (new alert)
-  state "Hazard" as H {
-    [*] --> open
-    open --> mitigating
-    mitigating --> closed
-    open --> closed
-    closed --> [*]
-  }
+  [*] --> Open: violation-level defect seen by a camera
+  Open --> Open: new violation (likelihood raised, clean count reset)
+  Open --> Open: clean frame (clean_days + 1, fewer than 3)
+  Open --> Closed: 3rd consecutive clean inspection day
+  Closed --> [*]
+  note right of Open
+    No frames on a day: nothing changes.
+    No user action exists in any state.
+  end note
 ```
+
+An alert has the same open / resolved cycle, driven by `diffAlerts` (one open alert per condition key).
 
 ## 6. Algorithms
 
 ### 6.1 Estimate (`domain/aci211.js`, `estimation.js`)
 
 1. Required average strength f'cr: f'c + 7.0 (f'c under 21 MPa), f'c + 8.3 (21-35), 1.1 f'c + 5.0 (above 35) - ACI 318 margin without field history.
-2. Water and entrapped air from the table for the slump 75-100 mm and maximum aggregate size (ACI 211.1).
+2. Water and entrapped air for slump 75-100 mm and maximum aggregate size (ACI 211.1).
 3. w/c ratio by linear interpolation of the ACI 211.1 table for f'cr (refused outside 15-45 MPa).
-4. Cement = water / (w/c). Coarse aggregate = bulk-volume fraction x dry-rodded density.
-5. Sand = remaining absolute volume x specific gravity.
-6. Per element: volume x mix x (1 + wastage). Cement bags = kg / 50. Sand and aggregate volumes = mass / loose bulk density (the ratio rodded/loose is the compaction factor reported to the user). Steel = volume x kg/m3 x (1 + wastage). Bricks = volume x bricks per m3 x (1 + wastage).
-7. Cost = quantity x rate (PKR), rounded to paisa per line; total = sum + contingency.
+4. Cement = water / (w/c). Coarse aggregate = bulk-volume fraction x dry-rodded density. Sand = remaining absolute volume x specific gravity.
+5. Per element: volume x mix x (1 + wastage). Bags = kg / 50. Sand and aggregate volumes = mass / loose bulk density (the ratio rodded/loose is the compaction factor reported). Steel = volume x kg/m3 x (1 + wastage). Bricks = volume x bricks per m3 x (1 + wastage).
+6. Cost = quantity x price-book price (PKR), rounded per line; total = sum + contingency.
 
-### 6.2 Earned value forecast (`domain/evm.js`)
+### 6.2 Progress from stages (`domain/stages.js`, `inference/scene.py`)
 
-- PV(d) = sum over tasks of budget x planned fraction (working days elapsed / working days in task).
-- EV(d) = sum of budget x latest recorded % / 100.
-- AC(d) = sum of logged material costs up to d.
-- CPI = EV / AC, SPI = EV / PV.
-- EAC = BAC / CPI. Range: the other end is AC + (BAC - EV) x (cost per unit value over the last 7 log entries).
-- Forecast duration = planned working days / SPI; forecast finish = project start + that many working days.
-- Thresholds (constants in `THRESHOLDS`): minimum 3 logs; budget on track up to 2% over, at risk up to 10%; schedule tolerance 3% of duration (minimum 1 day), at risk up to 10%.
+- The zone camera reports `stage` (what is visible) and, once concrete is visible, `fraction` (share of the element covered by concrete).
+- `bounds[i]` is the % complete at which stage `i` becomes the latest visible stage (e.g. slab `[0, 15, 45, 70]`: formwork from 15 %, rebar mesh from 45 %, concrete from 70 %).
+- Reported % = 0 for "nothing built"; midpoint of the range for middle stages; `bounds[last] + coverage x (100 - bounds[last])` for the concrete stage; masonry = measured wall fraction.
+- A stage counts only if at least 2 frames in the last 3 days show it; the value is the one the 2nd-highest frame reaches, so a single outlier cannot move it. Progress is a ratchet (never decreases).
+- Measured effect of design choices: reporting the **lower edge** of each range under-reported work done by 27 %; the **midpoint** reduced it to 9.8 %; adding **pour coverage** reduced it to 1.0 % (synthetic frames).
 
-### 6.3 Structural Danger Index (`domain/risk.js`)
+### 6.3 Stock, consumption and spend (`domain/inventory.js`, `scene.py`)
 
-- Severity S = clamp(max defect score in last 7 days / 0.6).
-- Density D = images with a violation-level defect / images analysed in the window.
-- Progression P = clamp(max(0, S - S_previous_window) + 0.5 x persistence), where persistence is the share of inspection days in the window that had a violation.
-- SDI = 10 x (wS S + wD D + wP P), weights by amount of inspection history (FR-19).
-- Overall safety = worse of the SDI band and the worst open hazard's band (rating 1-4 low, 5-9 moderate, 10-14 high, 15+ critical).
+- Classical stock estimate: colour-class masks (sand, gravel, bags, bricks, steel), cleaned and area-counted. Sand and gravel are cones: `V = A^1.5 tan(theta) / (3 sqrt(pi))` with angle of repose 34 / 38 degrees. Bags = footprint / 0.15 m2 x 8 layers; bricks = footprint x 600 per m2; steel = footprint x 600 kg per m2. These constants are assumptions to calibrate per site.
+- Consumption of a day = stock in its first frame minus stock in its last frame, ignoring changes under 2 % (noise). A delivery = today's first frame minus yesterday's last frame when the rise is above 15 % and a per-material minimum.
+- Spend = consumption x price-book price, with the price frozen the first time a day is costed.
+- Measured effect: using only end-of-day stock hid consumption on delivery days (spend -17.3 % vs truth); start/end-of-day frames gave -1.6 % (synthetic).
 
-### 6.4 Defect scoring (`services/inference`)
+### 6.4 Earned value forecast (`domain/evm.js`)
 
-Rust score = fraction of ROI pixels in orange/red-brown HSV ranges. Honeycomb score = 0.6 x void-area ratio + 0.4 x normalised Laplacian roughness. Severity from score: <0.15 low, <0.35 medium, <0.60 high, otherwise critical (inherited from the POC, informed by ACI 201.1R wording). The OpenCV backend splits the image into 3x3 tiles and scores each; the optional YOLO-World backend localises regions first.
+- PV(d) = sum of task budget x planned fraction (working days elapsed / working days in task). EV(d) = sum of task budget x measured %. AC(d) = measured spend to date.
+- CPI = EV / AC, SPI = EV / PV. EAC = BAC / CPI; range from the recent cost per unit of value (last 7 days). Forecast duration = planned working days / SPI.
+- Thresholds in `THRESHOLDS`: at least 3 logged days; budget on track up to 2 % over, at risk up to 10 %; schedule tolerance 3 % of duration (minimum 1 day), at risk up to 10 %.
+
+### 6.5 Structural Danger Index and hazards (`domain/risk.js`)
+
+- Severity S = clamp(max defect score in last 7 days / 0.6). Density D = frames with a violation / frames analysed. Progression P = clamp(max(0, S - S_previous) + 0.5 x persistence). SDI = 10 x (wS S + wD D + wP P), weights 0.6/0.4/0 (first inspection day), 0.5/0.3/0.2 (fewer than 5 days), 0.4/0.3/0.3.
+- `deriveHazards` walks each (camera, defect type) by date: violation opens or raises a hazard; a day the same camera was analysed with no such defect adds a clean day; 3 consecutive clean days close it; a later violation opens a new hazard. The result is stored by deleting and re-inserting the project's hazards, so the table is always a pure function of the evidence.
+- Overall safety = worse of the SDI band and the worst open hazard's band; flagged `evidence_gap` when a camera is overdue.
+
+### 6.6 Defect scoring (`pipeline.py`)
+
+Rust score = share of ROI pixels in orange/red-brown HSV ranges. Honeycomb score = 0.6 x void-area ratio + 0.4 x normalised Laplacian roughness. Severity: <0.15 low, <0.35 medium, <0.60 high, else critical (from the POC, informed by ACI 201.1R wording). Default backend splits the frame into 3x3 tiles and scores each.
 
 ## 7. Security design
 
 | Threat | Control |
 |---|---|
-| Credential guessing | bcrypt hashes, identical error for unknown user and wrong password, 5 failures per 15 minutes per email+IP |
-| Cross-tenant data access | Organisation filter plus membership check in `projectAccess`; 404 hides existence; photos use the same rule |
-| Privilege escalation | Role checks per route; investors blocked from all writes |
-| Malicious uploads | Type decided from magic bytes, size limit, files stored under generated names, key path-traversal guard |
-| Token theft after account disable | User row re-read on every request |
-| Injection | Parameterised SQL only; zod validation on all bodies |
+| Engineer falsifies progress, spend or defects | No route exists; strict input schemas; database constraints; frames only from cameras |
+| Engineer or contractor hides problems by choosing photos | Cameras submit on their own; silence is flagged (overdue, uncovered); silence never closes a hazard |
+| Replaying old frames | Unique `(camera, sha256)`; clock check within 10 minutes |
+| Stolen or guessed camera key | 192-bit random secret, only the hash stored, constant-time compare, per-camera disable, daily cap |
+| Credential guessing | bcrypt, identical error for unknown user and wrong password, 5 failures per 15 minutes |
+| Cross-tenant access | Organisation filter plus membership check; 404 hides existence; same for frames |
+| Malicious uploads | Type from magic bytes, size limit, generated file names, key path-traversal guard |
+| Token after account disable | User row re-read on every request |
+| Injection | Parameterised SQL only; zod validation |
 
-Known gaps: no HTTPS termination (deployment concern), in-memory rate limiter (single process), no refresh tokens.
+Known gaps: no HTTPS termination (deployment), in-memory login limiter (single process), no refresh tokens, no detection of a covered or redirected camera, the admin role is trusted (an administrator could still edit the database directly; a deployment should restrict database access and ship the audit log off the machine).
 
 ## 8. Key technical decisions
 
 | Decision | Alternative | Reason |
 |---|---|---|
-| Pure domain layer | Logic in routes/SQL | Every figure can be unit-tested against hand calculations |
-| Earned-value method for forecasts | Linear extrapolation of spend | Separates "spent a lot" from "did a lot"; standard (ANSI/EIA-748) so investors' advisers recognise it |
-| BOQ entry first | Parsing drawings | Reliable now; extraction can fill the same table later |
-| Heuristic defect scoring with pluggable backends | Training a model in Sprint 1 | No labelled honeycomb data yet; interface is ready for trained weights. Cracks are the exception: SDNET2018 provided labelled data, so a MobileNetV3 model was trained and plugged in as backend `crack_cnn` ([crack-model.md](crack-model.md)) |
-| Simulated material proposals flagged everywhere | Faking real detection | A fake that looks real would mislead investors |
-| Generated ERD with drift test | Hand-drawn ERD | Keeps design and code identical |
-| JSONB for snapshots and raw results | Many narrow tables | Shapes vary per analysis; still stored and queryable |
+| Evidence only from cameras; no human override | Engineer-editable with audit | Directly serves the product purpose: records that cannot be falsified |
+| Derived tables rebuilt by replay | Incremental updates | Idempotent, cannot drift from the evidence, easy to re-run when a better model arrives |
+| Model registry with plug-ins and per-task activation | Hard-wired models | A trained model can be dropped in, tried, measured and only then activated |
+| Stamp every analysis with model and version | Store results only | Any figure can be traced and re-computed when models change |
+| Earned-value forecasting | Linear extrapolation | Separates "spent a lot" from "did a lot"; standard (ANSI/EIA-748) |
+| Stage-based progress with midpoint and pour coverage | Lower-edge stages | Measured to remove a systematic -27 % bias |
+| Start/end-of-day yard frames | Daily snapshot | Measured to remove a -17 % spend error on delivery days |
+| Synthetic demo frames, labelled | Faked dashboard numbers or no demo | The demo exercises the real pipeline; limits are stated everywhere |
+| JSONB for raw results and snapshots | Many narrow tables | Shapes vary by model |
 
 ## 9. Design evolution from the proposal
 
-| Proposal (Sep 2026) | Sprint 1 | Why |
+| Proposal (Sep 2026) | Now | Why |
 |---|---|---|
-| Audience: regulating council | Audience: investors and site engineers | Product pivot |
-| Engineer accountability, blacklist recommendations, council decisions | Removed. PEC number kept as an optional profile field; audit log kept | Not needed for investors |
-| SDI as the score shown to officials | SDI kept for engineers; investors see a 4-level traffic light and one sentence | Non-engineers need meaning, not an index |
-| Risk matrices, ALARP, bow-tie "in mind" | Implemented (FR-20) | Requested to stay |
-| Crack width vs PEC 0.3 mm | Crack presence is detected by a trained model and raises the "Excessive cracking" hazard; width is still deferred | Needs calibrated imagery; see crack-model.md |
-| Streamlit POC (SQLite) | Moved to `services/inference`; detection code reused, SQLite replaced by PostgreSQL | The POC is now the inference engine |
-| New: cost estimation, financial tracking, schedule tracking | FR-04 to FR-18 | New modules |
-| MERN (MongoDB implied by name) | Express + React + PostgreSQL (as the proposal's stack list states) | Relational data fits money, dates and constraints |
+| Audience: regulating council | Investors and site engineers | Product pivot |
+| Engineer accountability, blacklist | Removed. PEC number is an optional profile field; audit log kept | Not needed for investors |
+| SDI shown to officials | SDI for engineers; investors see a 4-level light and a sentence | Non-engineers need meaning, not an index |
+| Risk matrices, ALARP, bow-tie "in mind" | Implemented and automatic | Requested to stay |
+| Engineer-submitted photos | **Fixed cameras only** | Engineers must not choose or alter evidence |
+| Engineer-typed progress, spend and hazards (Sprint 1 first cut) | **Measured from images; no entry path** | Same reason |
+| Crack width vs PEC 0.3 mm | Crack presence: trained model as an opt-in plugin ([crack-model.md](crack-model.md)); width still deferred | Needs calibrated imagery |
+| Streamlit POC (SQLite) | Moved into `services/inference` as the default defect backend | The POC is now an engine |
+| New modules: cost estimation, financial tracking, schedule tracking | FR-04 to FR-22 | New scope |
+
+## 10. The evidence model and tamper-resistance
+
+**Principle.** Whatever describes the physical state of the site (how much is built, how much material was used, what defects and hazards exist) must come from a camera and must not be editable by anyone who benefits from a good-looking record.
+
+| Concern | Control |
+|---|---|
+| Who may supply evidence | Only registered cameras holding a secret key |
+| Who installs cameras | Administrators only (not site engineers) |
+| Editing history | No update or delete routes; derived tables rebuilt from observations; database constraints reject manual hazards |
+| Choosing what to show | Cameras report on their own. Overdue cameras and uncovered tasks raise alerts; the investor sees "not verified" |
+| Calling an area fixed | A hazard closes only after 3 consecutive clean inspection days measured by the same camera |
+| Time tampering | Camera clock must agree with the server; each frame stores capture and receive times |
+| Duplicates and replays | Unique `(camera, SHA-256)` |
+| Model changes | Every analysis stores model name and version; results can be re-run |
+| What engineers still enter | BOQ/budget, crews, equipment: visible in the audit log and clearly labelled as inputs |
+
+**Open risk.** A camera can still be physically obstructed or pointed away. Not detected yet; planned as a frame-change and scene-consistency check.

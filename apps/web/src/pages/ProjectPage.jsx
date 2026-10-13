@@ -6,10 +6,11 @@ import Investor from './Investor.jsx';
 import Overview from './engineer/Overview.jsx';
 import Design from './engineer/Design.jsx';
 import Schedule from './engineer/Schedule.jsx';
-import DailyLog from './engineer/DailyLog.jsx';
+import SiteStatus from './engineer/SiteStatus.jsx';
+import Evidence from './engineer/Evidence.jsx';
 import Risk from './engineer/Risk.jsx';
 
-const TABS = [['overview', 'Overview'], ['design', 'Design & estimate'], ['schedule', 'Schedule'], ['log', 'Daily log'], ['risk', 'Risk & safety']];
+const TABS = [['overview', 'Overview'], ['design', 'Design & estimate'], ['schedule', 'Schedule'], ['site', 'Crews & equipment'], ['evidence', 'Evidence'], ['risk', 'Risk & safety']];
 
 export default function ProjectPage() {
   const { id } = useParams();
@@ -30,6 +31,7 @@ export default function ProjectPage() {
   return (
     <>
       <Link to="/">← Projects</Link>
+      {data.project.is_demo && <div className="note" style={{ margin: '8px 0' }}><b>Demo project.</b> Camera frames are synthetic drawings generated for demonstration, processed by the same pipeline as real frames.</div>}
       <div className="row" style={{ justifyContent: 'space-between', margin: '8px 0 16px' }}>
         <div>
           <h1>{data.project.name}</h1>
@@ -48,8 +50,9 @@ export default function ProjectPage() {
       {tab === 'overview' && <Overview data={data} />}
       {tab === 'design' && <Design pid={id} data={data} reload={reload} />}
       {tab === 'schedule' && <Schedule pid={id} data={data} reload={reload} />}
-      {tab === 'log' && <DailyLog pid={id} reload={reload} />}
-      {tab === 'risk' && <Risk pid={id} data={data} reload={reload} />}
+      {tab === 'site' && <SiteStatus pid={id} reload={reload} />}
+      {tab === 'evidence' && <Evidence pid={id} data={data} reload={reload} />}
+      {tab === 'risk' && <Risk data={data} />}
     </>
   );
 }

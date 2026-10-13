@@ -29,3 +29,6 @@ annotated_*.jpg
 Thumbs.db
 .DS_Store
 .test-storage/
+
+# ultralytics/CLIP download cache
+weights/

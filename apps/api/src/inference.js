@@ -42,10 +42,16 @@ export function analyseActivity(prevBuf, prevType, currBuf, currType) {
   return call('/v1/activity', f);
 }
 
-export function proposeMaterials(buf, contentType) {
+export function analyseStage(buf, contentType, elementType) {
   const f = new FormData();
-  f.append('image', blob(buf, contentType), 'upload');
-  return call('/v1/materials', f);
+  f.append('image', blob(buf, contentType), 'frame');
+  return call('/v1/stage', f, `?element_type=${encodeURIComponent(elementType)}`);
+}
+
+export function analyseInventory(buf, contentType, scaleMPerPx) {
+  const f = new FormData();
+  f.append('image', blob(buf, contentType), 'frame');
+  return call('/v1/inventory', f, `?scale_m_per_px=${encodeURIComponent(scaleMPerPx)}`);
 }
 
 export async function inferenceHealth() {

@@ -184,12 +184,6 @@ def is_available() -> bool:
     return model_path().is_file()
 
 
-def auto_enabled() -> bool:
-    """Whether backend "auto" also runs the crack model. Set CRACK_DETECTION=off to switch it off
-    (the explicit crack_cnn backend still works)."""
-    return os.environ.get("CRACK_DETECTION", "on").strip().lower() not in ("off", "0", "false", "no")
-
-
 def get_model() -> CrackModel:
     """Load once and share. Raises ModelNotAvailable if the file is missing."""
     global _cached

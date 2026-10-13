@@ -17,7 +17,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import crack_model  # noqa: E402
 import crack_video  # noqa: E402
-import pipeline  # noqa: E402
 from service import app  # noqa: E402
 
 SAMPLES = pathlib.Path(__file__).resolve().parents[1] / "samples" / "cracks"
@@ -135,60 +134,55 @@ def test_persistent_detection_is_reported_once():
     assert len(seen) == 2
 
 
-# --------------------------------------------------------------------- service integration
-def test_pipeline_crack_backend_returns_crack_findings(monkeypatch):
+# --------------------------------------------------------------------- registry / service integration
+def test_crack_plugins_are_registered_but_not_active_by_default():
+    info = client.get("/v1/backends").json()
+    names = {b["name"] for b in info["backends"]}
+    assert {"crack_cnn", "tiles_and_cracks"} <= names
+    assert info["active"]["defects"] == "opencv_tiles"  # a plugin is never activated silently
+
+
+def test_crack_backend_returns_stamped_crack_findings(monkeypatch):
     monkeypatch.setattr(crack_model, "get_model", lambda: StubModel())
-    r = pipeline.analyze_defects(png(wall_with_crack()), backend="crack_cnn")
-    assert r["backend"] == "crack_cnn"
-    f = r["findings"][0]
+    monkeypatch.setattr(crack_model, "is_available", lambda: True)
+    r = client.post("/v1/defects?backend=crack_cnn", files={"image": ("a.png", png(wall_with_crack()), "image/png")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["backend"] == "crack_cnn" and body["model"]["backend"] == "crack_cnn"
+    assert body["model"]["version"] and body["model"]["reliability"] == "unvalidated"
+    f = body["findings"][0]
     assert f["defect_type"] == "concrete_crack" and f["backend"] == "crack_cnn"
     assert 0.5 < f["score"] <= 1 and f["severity"] in ("Medium", "High")
     assert f["is_violation"] is True
     x1, y1, x2, y2 = f["bbox"]
     assert x1 < x2 and y1 < y2
-    assert 0 < r["coverage"] <= 1
+    assert 0 < body["coverage"] <= 1
 
 
-def test_auto_backend_adds_crack_cnn_only_when_model_is_installed(monkeypatch):
+def test_tiles_and_cracks_adds_cracks_to_the_heuristic_findings(monkeypatch):
     monkeypatch.setattr(crack_model, "get_model", lambda: StubModel())
     monkeypatch.setattr(crack_model, "is_available", lambda: True)
-    r = pipeline.analyze_defects(png(wall_with_crack()), backend="auto")
-    assert r["backend"].endswith("+crack_cnn")
-    assert any(f["defect_type"] == "concrete_crack" for f in r["findings"])
-    monkeypatch.setattr(crack_model, "is_available", lambda: False)
-    r = pipeline.analyze_defects(png(wall_with_crack()), backend="auto")
-    assert "crack_cnn" not in r["backend"]
-
-
-def test_http_crack_backend_and_health(monkeypatch):
-    monkeypatch.setattr(crack_model, "get_model", lambda: StubModel())
-    r = client.post("/v1/defects?backend=crack_cnn", files={"image": ("a.png", png(wall_with_crack()), "image/png")})
-    assert r.status_code == 200 and r.json()["findings"][0]["defect_type"] == "concrete_crack"
-    assert "crack_model_available" in client.get("/health").json()
-
-
-def test_auto_backend_can_be_switched_off_with_env(monkeypatch):
-    monkeypatch.setattr(crack_model, "get_model", lambda: StubModel())
-    monkeypatch.setattr(crack_model, "is_available", lambda: True)
-    monkeypatch.setenv("CRACK_DETECTION", "off")
-    r = pipeline.analyze_defects(png(wall_with_crack()), backend="auto")
-    assert "crack_cnn" not in r["backend"]
-    # an explicit request still works
-    assert pipeline.analyze_defects(png(wall_with_crack()), backend="crack_cnn")["findings"]
+    r = client.post("/v1/defects?backend=tiles_and_cracks", files={"image": ("a.png", png(wall_with_crack()), "image/png")})
+    assert r.status_code == 200, r.text
+    findings = r.json()["findings"]
+    assert any(f["defect_type"] == "concrete_crack" for f in findings)
+    scores = [f["score"] for f in findings]
+    assert scores == sorted(scores, reverse=True)
+    assert all(f["defect_type"] in ("concrete_crack", "rusted_rebar", "honeycombed_concrete") for f in findings)
 
 
 def test_crack_backend_without_model_file_is_501(monkeypatch, tmp_path):
     monkeypatch.setenv("CRACK_MODEL_PATH", str(tmp_path / "missing.onnx"))
     monkeypatch.setattr(crack_model, "_cached", None)
     r = client.post("/v1/defects?backend=crack_cnn", files={"image": ("a.png", png(wall_with_crack()), "image/png")})
-    assert r.status_code == 501 and "crack model not found" in r.json()["detail"]
+    assert r.status_code == 501 and "not available" in r.json()["detail"]
     monkeypatch.setattr(crack_model, "_cached", None)
 
 
-def test_auto_backend_still_works_without_model_file(monkeypatch, tmp_path):
+def test_default_defects_backend_unaffected_by_crack_model(monkeypatch, tmp_path):
     monkeypatch.setenv("CRACK_MODEL_PATH", str(tmp_path / "missing.onnx"))
     r = client.post("/v1/defects", files={"image": ("a.png", png(wall_with_crack()), "image/png")})
-    assert r.status_code == 200 and "crack_cnn" not in r.json()["backend"]
+    assert r.status_code == 200 and r.json()["backend"] == "opencv_tiles"
 
 
 # --------------------------------------------------------------------- real trained model
@@ -212,8 +206,9 @@ def test_real_model_separates_sample_sdnet_patches():
 
 
 @needs_model
-def test_real_model_flags_cracked_patch_through_the_service():
+def test_real_model_runs_through_the_service():
     f = sorted(SAMPLES.glob("cracked_*.jpg"))[0]
     r = client.post("/v1/defects?backend=crack_cnn", files={"image": (f.name, f.read_bytes(), "image/jpeg")})
     assert r.status_code == 200
-    assert r.json()["image_size"] == [256, 256]
+    body = r.json()
+    assert body["image_size"] == [256, 256] and len(body["model"]["weights_sha256"]) == 64

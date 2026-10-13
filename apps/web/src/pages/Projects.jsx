@@ -38,7 +38,7 @@ export default function Projects() {
           return (
             <Link key={p.id} to={`/p/${p.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
               <div className="card">
-                <h2>{p.name}</h2>
+                <h2>{p.name}{p.is_demo && <span className="badge s-neutral" style={{ marginLeft: 8 }}><i>·</i>Demo</span>}</h2>
                 <div className="small muted">{p.location} · started {dateText(p.start_date)}</div>
                 {h ? (
                   <div className="row" style={{ marginTop: 10 }}>

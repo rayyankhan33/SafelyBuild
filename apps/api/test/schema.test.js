@@ -30,6 +30,7 @@ describe('schema', () => {
     assert.equal(await n('material_catalog'), 5);
     assert.ok(await n('estimation_factors') >= 15);
     assert.equal(await n('productivity_rates'), 5);
+    assert.equal(await n('price_book'), 5); // one price per material
     assert.ok(await n('hazard_library') >= 8);
   });
   test('every code-derived factor has a documented origin', async () => {
@@ -57,15 +58,15 @@ describe('database constraints protect application invariants', () => {
     await rejects("INSERT INTO daily_logs (project_id, log_date, author_id) VALUES ($1,'2026-02-01',$2)", [ids.project, ids.user], '23505');
   });
   test('risk rating is computed by the database and bounded 1-5', async () => {
-    const h = (await pool.query("INSERT INTO hazards (project_id, source, category, title, likelihood, severity, identified_on) VALUES ($1,'manual','c','t',4,5,'2026-02-01') RETURNING risk_rating", [ids.project])).rows[0];
+    const h = (await pool.query("INSERT INTO hazards (project_id, source, category, title, likelihood, severity, identified_on) VALUES ($1,'auto_defect','c','t',4,5,'2026-02-01') RETURNING risk_rating", [ids.project])).rows[0];
     assert.equal(h.risk_rating, 20);
-    await rejects("INSERT INTO hazards (project_id, source, category, title, likelihood, severity, identified_on) VALUES ($1,'manual','c','t',6,1,'2026-02-01')", [ids.project], '23514');
+    await rejects("INSERT INTO hazards (project_id, source, category, title, likelihood, severity, identified_on) VALUES ($1,'auto_defect','c','t',6,1,'2026-02-01')", [ids.project], '23514');
   });
   test('progress is 0-100 and task dates are ordered', async () => {
     await rejects("INSERT INTO schedule_tasks (project_id, name, seq, planned_start, planned_end) VALUES ($1,'t',1,'2026-03-02','2026-03-01')", [ids.project], '23514');
   });
   test('negative quantities and rates are rejected', async () => {
-    await rejects("INSERT INTO project_material_rates (project_id, material_id, rate_pkr) VALUES ($1,1,-5)", [ids.project], '23514');
+    await rejects("UPDATE price_book SET rate_pkr = -5 WHERE material_id = 1", [], '23514');
   });
   test('only one open alert per dedupe key', async () => {
     const q = "INSERT INTO alerts (project_id, kind, level, dedupe_key, technical_msg, plain_msg) VALUES ($1,'budget','warning','k','t','p')";
@@ -73,6 +74,23 @@ describe('database constraints protect application invariants', () => {
     await rejects(q, [ids.project], '23505');
     await pool.query("UPDATE alerts SET resolved_at = now() WHERE project_id = $1", [ids.project]);
     await pool.query(q, [ids.project]); // allowed again once the first is resolved
+  });
+  test('cameras: zone needs an element, yard needs a scale, kinds are restricted', async () => {
+    const ins = (kind, el, scale) => pool.query("INSERT INTO cameras (project_id, name, kind, element_id, scale_m_per_px, key_hash) VALUES ($1,'c',$2,$3,$4,'h')", [ids.project, kind, el, scale]);
+    await rejects("INSERT INTO cameras (project_id, name, kind, key_hash) VALUES ($1,'c','zone','h')", [ids.project], '23514');
+    await rejects("INSERT INTO cameras (project_id, name, kind, key_hash) VALUES ($1,'c','yard','h')", [ids.project], '23514');
+    await rejects("INSERT INTO cameras (project_id, name, kind, key_hash) VALUES ($1,'c','drone','h')", [ids.project], '23514');
+    await ins('overview', null, null);
+  });
+  test('the same frame bytes cannot be stored twice for one camera', async () => {
+    const cam = (await pool.query("SELECT id FROM cameras WHERE project_id = $1 LIMIT 1", [ids.project])).rows[0].id;
+    const q = "INSERT INTO media (project_id, camera_id, storage_key, sha256, content_type, size_bytes) VALUES ($1,$2,$3,'samehash','image/jpeg',1)";
+    await pool.query(q, [ids.project, cam, 'k/1']);
+    await rejects(q, [ids.project, cam, 'k/2'], '23505');
+  });
+  test('hazards can only come from detection and cannot be closed without a closing date', async () => {
+    await rejects("INSERT INTO hazards (project_id, source, category, title, likelihood, severity, identified_on) VALUES ($1,'manual','c','t',1,1,'2026-02-01')", [ids.project], '23514');
+    await rejects("INSERT INTO hazards (project_id, source, category, title, likelihood, severity, status, identified_on) VALUES ($1,'auto_defect','c','t',1,1,'closed','2026-02-01')", [ids.project], '23514');
   });
   test('deleting a project cascades to its data', async () => {
     await pool.query('DELETE FROM projects WHERE id = $1', [ids.project]);

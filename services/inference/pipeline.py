@@ -1,14 +1,13 @@
 """
 pipeline.py - Image analysis used by the FastAPI inference service.
 
-Three analyses are exposed:
+Analyses exposed here:
 
-  * analyze_defects  - rusted rebar / honeycombed concrete (real, OpenCV heuristics
-                       from the POC; optional YOLO-World localisation when installed) and
-                       concrete cracks (trained CNN, crack_model.py)
-  * activity_change  - how much a scene changed between two photos (real, OpenCV)
-  * propose_materials- material counts from a photo (NOT implemented in Sprint 1;
-                       see MaterialProvider)
+  * analyze_defects  - rusted rebar / honeycombed concrete (OpenCV heuristics from the POC;
+                       optional YOLO-World localisation when installed)
+  * activity_change  - how much a scene changed between two photos (OpenCV)
+
+Construction stage and material stock live in scene.py (classical) and yolo_scene.py (pretrained).
 
 Nothing here touches a database. The Node API owns persistence.
 """
@@ -23,7 +22,6 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
-import crack_model
 from heuristics import compute_honeycomb_score, compute_rust_score
 from severity import classify_severity, is_violation
 
@@ -43,8 +41,8 @@ class ImageError(ValueError):
 
 @dataclass
 class DefectFinding:
-    defect_type: str  # "rusted_rebar" | "honeycombed_concrete" | "concrete_crack"
-    score: float  # 0..1 from heuristics (crack_cnn: model probability)
+    defect_type: str  # "rusted_rebar" | "honeycombed_concrete"
+    score: float  # 0..1 from heuristics
     severity: str  # Low | Medium | High | Critical
     is_violation: bool
     bbox: Tuple[int, int, int, int]  # x1, y1, x2, y2 in the analysed image
@@ -126,16 +124,6 @@ def _yolo_findings(img: np.ndarray, min_violation: str, conf: float) -> List[Def
     return findings
 
 
-def _crack_findings(img: np.ndarray, min_violation: str, threshold: Optional[float] = None) -> List[DefectFinding]:
-    """Trained crack CNN, scanned over the frame with sliding windows (crack_model.py)."""
-    result = crack_model.get_model().scan(img, threshold=threshold)
-    return [
-        DefectFinding(crack_model.DEFECT_TYPE, r.score, r.severity, is_violation(r.severity, min_violation),
-                      r.bbox, r.mean_prob, "crack_cnn")
-        for r in result.regions
-    ]
-
-
 def yolo_available() -> bool:
     try:
         import ultralytics  # noqa: F401
@@ -146,29 +134,17 @@ def yolo_available() -> bool:
 
 def analyze_defects(data: bytes, backend: str = "auto", min_violation: str = "Medium",
                     conf: float = 0.15) -> dict:
-    """
-    Return findings for one image. backend: auto | opencv_tiles | yolo_world | crack_cnn.
-
-    "auto" runs the rust/honeycomb backend (YOLO-World if installed, else tiles) and, when the
-    trained crack model file is present (and CRACK_DETECTION is not "off"), the crack CNN as well;
-    "crack_cnn" runs only the CNN.
-    """
+    """Return findings for one image. backend: auto | opencv_tiles | yolo_world."""
     img = decode_image(data)
     used = backend
     if backend == "auto":
         used = "yolo_world" if yolo_available() else "opencv_tiles"
-        if crack_model.is_available() and crack_model.auto_enabled():
-            used += "+crack_cnn"
-    findings: List[DefectFinding] = []
-    for part in used.split("+"):
-        if part == "yolo_world":
-            findings += _yolo_findings(img, min_violation, conf)
-        elif part == "opencv_tiles":
-            findings += _tile_findings(img, min_violation)
-        elif part == "crack_cnn":
-            findings += _crack_findings(img, min_violation)
-        else:
-            raise ValueError(f"unknown backend '{backend}'")
+    if used == "yolo_world":
+        findings = _yolo_findings(img, min_violation, conf)
+    elif used == "opencv_tiles":
+        findings = _tile_findings(img, min_violation)
+    else:
+        raise ValueError(f"unknown backend '{backend}'")
     findings.sort(key=lambda f: f.score, reverse=True)
     h, w = img.shape[:2]
     return {
@@ -221,33 +197,3 @@ def activity_change(prev_bytes: bytes, curr_bytes: bytes) -> dict:
         "scene_similarity": round(similarity, 4),
         "alignment_ok": similarity >= 0.5,
     }
-
-
-# ----------------------------------------------------------------------- materials
-class MaterialProvider:
-    """
-    Sprint 1 limitation (disclosed in docs/tool-disclosure.md and the UI):
-    there is no trained model that counts cement bags, sand piles or rebar bundles.
-
-      * mode "none"      (default) -> returns no proposals; engineers enter quantities.
-      * mode "simulated" (demo)    -> returns clearly flagged simulated proposals so the
-                                      confirm/correct workflow can be demonstrated.
-    """
-
-    def __init__(self, mode: str = "none"):
-        if mode not in ("none", "simulated"):
-            raise ValueError("MATERIAL_PROVIDER must be 'none' or 'simulated'")
-        self.mode = mode
-
-    def propose(self, data: bytes) -> dict:
-        decode_image(data)  # still validate the upload
-        if self.mode == "none":
-            return {"mode": "none", "simulated": False, "proposals": [],
-                    "note": "No material-counting model in Sprint 1; enter quantities manually."}
-        digest = int.from_bytes(data[:8].ljust(8, b"\0"), "big")
-        proposals = [
-            {"material_code": "CEMENT", "quantity": 20 + digest % 30, "unit": "bag", "confidence": 0.5},
-            {"material_code": "SAND", "quantity": round(1.0 + (digest >> 8) % 40 / 10, 1), "unit": "m3", "confidence": 0.4},
-        ]
-        return {"mode": "simulated", "simulated": True, "proposals": proposals,
-                "note": "SIMULATED values for UI demonstration only."}

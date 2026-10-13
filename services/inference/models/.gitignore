@@ -1,0 +1,10 @@
+# model weights are large and are not committed; active.json (which backend is active) IS committed on purpose
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.bin
+*.engine
+*.ckpt
+# the trained crack model (16.8 MB) IS committed on purpose so the app works after a clone; see docs/crack-model.md
+!crack_cnn.onnx
