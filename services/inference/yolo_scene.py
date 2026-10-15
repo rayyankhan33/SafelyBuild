@@ -51,12 +51,19 @@ def available() -> bool:
     return importlib.util.find_spec("ultralytics") is not None and WEIGHTS.exists()
 
 
+def _limit_threads() -> None:
+    """Use at most half the CPU cores (YOLO_THREADS overrides) so analysis never starves the rest of the app."""
+    import torch
+    torch.set_num_threads(int(os.environ.get("YOLO_THREADS", max(1, (os.cpu_count() or 2) // 2))))
+
+
 def _load(prompts: List[str]):
     global _model, _prompts_set
     if not WEIGHTS.exists():
         raise ImportError(f"YOLO-World weights not found at {WEIGHTS}")
     from ultralytics import YOLOWorld  # lazy: heavy import
     if _model is None:
+        _limit_threads()
         _model = YOLOWorld(str(WEIGHTS))
     if tuple(prompts) != _prompts_set:  # encoding the text prompts is slow: only redo it when they change
         _model.set_classes(prompts)
@@ -73,6 +80,22 @@ def _detect(img: np.ndarray, prompt_map: Dict[str, List[str]]) -> Dict[str, List
     for box, cls, conf in zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist(), res.boxes.conf.tolist()):
         out[owner[prompts[int(cls)]]].append((*box, conf))
     return out
+
+
+def detect_free(img: np.ndarray, prompts: List[str], conf: float = 0.10, imgsz: int = 640) -> List[dict]:
+    """
+    Raw open-vocabulary detections for ANY list of text prompts (used by the test-footage tool).
+    Returns [{"label", "conf", "bbox": [x1, y1, x2, y2]}] in the pixel coordinates of `img`.
+    """
+    prompts = [p.strip() for p in prompts if p and p.strip()]
+    if not prompts:
+        raise ValueError("at least one prompt is required")
+    model = _load(prompts)
+    res = model.predict(img, conf=conf, imgsz=imgsz, verbose=False)[0]
+    return [
+        {"label": prompts[int(c)], "conf": round(float(s), 4), "bbox": [round(float(v), 1) for v in b]}
+        for b, c, s in zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist(), res.boxes.conf.tolist())
+    ]
 
 
 def _coverage(boxes: List[tuple], shape) -> float:

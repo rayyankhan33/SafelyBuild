@@ -17,18 +17,42 @@ await admin.end();
 process.env.DATABASE_URL = ADMIN_URL.replace(/\/[^/]*$/, `/${TEST_DB}`);
 process.env.STORAGE_DIR = fileURLToPath(new URL('../../../.test-storage', import.meta.url));
 process.env.INFERENCE_TIMEOUT_MS = '3000';
+process.env.TEST_POLL_MS = '30';           // test-footage runs are polled quickly in tests
+process.env.TEST_POLL_MAX_FAILURES = '3';
+process.env.TEST_UPLOAD_TIMEOUT_MS = '4000';
 
 /** Fake inference service. `mode` can be switched per test: ok | down | slow-error | badimage. */
 export function startFakeInference() {
-  const state = { mode: 'ok', calls: [], findings: [], stage: 0, fraction: null, items: [] };
+  const state = {
+    mode: 'ok', calls: [], findings: [], stage: 0, fraction: null, items: [],
+    // test-footage job: `script` is the list of job views served in order (the last one repeats)
+    footage: { script: [], idx: 0, starts: [], deleted: [], rejectStart: null, gone: false },
+  };
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       state.calls.push(req.url);
       const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
-      if (state.mode === 'down') return req.destroy();
+      if (state.mode === 'down') return req.socket.destroy();
       if (state.mode === 'error') return send(500, { detail: 'model crashed' });
+      if (req.url.startsWith('/v1/test/')) {
+        const f = state.footage;
+        const m = req.url.match(/^\/v1\/test\/jobs\/([^/]+)(?:\/frames\/(\d+)\.jpg)?$/);
+        if (req.url === '/v1/test/defaults') return send(200, { prompts: ['cement bag', 'pile of sand'], interval_s: 3, conf: 0.1, max_frames: 400, min_interval_s: 1, max_interval_s: 10, available: true });
+        if (req.method === 'POST' && req.url === '/v1/test/jobs') {
+          f.starts.push({ bytes: Buffer.concat(chunks).length, hasPrompts: Buffer.concat(chunks).toString('latin1').includes('name="prompts"'), contentType: req.headers['content-type'] });
+          if (f.rejectStart) return send(f.rejectStart.status, { detail: f.rejectStart.detail });
+          return send(202, { id: `job-${f.starts.length}` });
+        }
+        if (m && req.method === 'DELETE') { f.deleted.push(m[1]); return send(200, { ok: true }); }
+        if (m && m[2] !== undefined) { res.writeHead(200, { 'content-type': 'image/jpeg' }); return res.end(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from(`frame-${m[2]}`)])); }
+        if (m && req.method === 'GET') {
+          if (f.gone) return send(404, { detail: 'no such job' });
+          return send(200, { ...f.script[Math.min(f.idx++, f.script.length - 1)], id: m[1] });
+        }
+        return send(404, {});
+      }
       if (req.url.startsWith('/v1/defects')) {
         return send(200, { backend: 'fake', image_size: [640, 480], coverage: 0.2, findings: state.findings });
       }

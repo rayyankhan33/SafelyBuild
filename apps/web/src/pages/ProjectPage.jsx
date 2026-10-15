@@ -10,8 +10,9 @@ import SiteStatus from './engineer/SiteStatus.jsx';
 import Evidence from './engineer/Evidence.jsx';
 import Risk from './engineer/Risk.jsx';
 import Access from './engineer/Access.jsx';
+import TestFootage from './engineer/TestFootage.jsx';
 
-const BASE_TABS = [['overview', 'Overview'], ['design', 'Design & estimate'], ['schedule', 'Schedule'], ['site', 'Crews & equipment'], ['evidence', 'Evidence'], ['risk', 'Risk & safety']];
+const BASE_TABS = [['overview', 'Overview'], ['design', 'Design & estimate'], ['schedule', 'Schedule'], ['site', 'Crews & equipment'], ['evidence', 'Evidence'], ['risk', 'Risk & safety'], ['testing', 'Test footage']];
 const ADMIN_TAB = ['access', 'Access'];
 
 export default function ProjectPage() {
@@ -56,6 +57,7 @@ export default function ProjectPage() {
       {tab === 'site' && <SiteStatus pid={id} reload={reload} />}
       {tab === 'evidence' && <Evidence pid={id} data={data} reload={reload} />}
       {tab === 'risk' && <Risk data={data} />}
+      {tab === 'testing' && <TestFootage pid={id} />}
       {tab === 'access' && role === 'admin' && <Access pid={id} />}
     </>
   );

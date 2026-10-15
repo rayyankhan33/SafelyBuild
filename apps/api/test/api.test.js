@@ -5,6 +5,9 @@ import { startFakeInference } from './env.js';
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const fake = await startFakeInference();
 const { pool } = await import('../src/db/pool.js');
@@ -14,6 +17,7 @@ const { hashPassword } = await import('../src/http.js');
 const { addDays, today } = await import('../src/domain/dates.js');
 const { authenticateCamera, ingestFrame } = await import('../src/services/ingest.js');
 const { rebuild } = await import('../src/services/rollup.js');
+const footageSvc = await import('../src/services/testfootage.js');
 
 const PW = 'Test-Password-1';
 let server, base;
@@ -621,6 +625,213 @@ describe('accounts, notifications and project creation (TC-API-ACCT)', () => {
     assert.equal((await api('DELETE', `/api/projects/${p.id}/members/${inv.id}`, { token: tokens.admin })).status, 200);
     assert.equal((await api('GET', `/api/projects/${p.id}`, { token: inv.token })).status, 404);
     assert.equal((await api('DELETE', `/api/projects/${p.id}/members/${inv.id}`, { token: tokens.admin })).status, 404); // already removed
+  });
+});
+
+describe('TEMPORARY test footage (TC-API-FOOTAGE)', () => {
+  const { failStaleRuns } = footageSvc;
+  const mp4 = (extra = 3000) => Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftypisom'), crypto.randomBytes(extra)]);
+  const form = (buf, fields = {}, name = 'site.mp4') => {
+    const f = new FormData();
+    f.append('file', new Blob([buf]), name);
+    for (const [k, v] of Object.entries(fields)) f.append(k, v);
+    return f;
+  };
+  const upload = (token, buf = mp4(), fields = {}, id = projectId) => api('POST', `/api/projects/${id}/test-runs`, { token, form: form(buf, fields) });
+  const run = (id, token = tokens.eng) => api('GET', `/api/projects/${projectId}/test-runs/${id}`, { token });
+  const waitFor = async (id, statuses, token = tokens.eng) => {
+    for (let i = 0; i < 200; i++) {
+      const r = (await run(id, token)).body.run;
+      if (statuses.includes(r.status)) return r;
+      await new Promise((ok) => setTimeout(ok, 25));
+    }
+    throw new Error(`run ${id} never reached ${statuses}`);
+  };
+  const det = (label, conf, confirmed = false) => ({ label, conf, bbox: [10, 10, 80, 80], confirmed });
+  const frame = (i, t, extra = {}) => ({ i, t_s: t, sharpness: 900, reused: false, ms: 280, detections: [], ...extra });
+  const view = (status, frames, extra = {}) => ({
+    status, error: null,
+    params: { prompts: ['cement bag'], interval_s: 3, effective_interval_s: 3, conf: 0.1, max_frames: 400, estimated_frames: 3 },
+    video: { kind: 'video', fps: 25, frames: 225, duration_s: 9, width: 1280, height: 720 },
+    progress: { sampled: frames.length, analysed: frames.filter((f) => !f.reused).length, reused: frames.filter((f) => f.reused).length, estimated_total: 3 },
+    frames, summary: { per_label: { 'cement bag': { detections: 2, confirmed: 2, best_conf: 0.7 } }, truncated: false, notes: [] },
+    ...extra,
+  });
+  const reset = () => { Object.assign(fake.state.footage, { script: [], idx: 0, starts: [], deleted: [], rejectStart: null, gone: false }); fake.state.mode = 'ok'; };
+  const evidenceCounts = async () => JSON.stringify((await pool.query(
+    `SELECT (SELECT count(*) FROM media WHERE project_id = $1) m, (SELECT count(*) FROM defects WHERE project_id = $1) d,
+            (SELECT count(*) FROM hazards WHERE project_id = $1) h, (SELECT count(*) FROM stage_observations o JOIN cameras c ON c.id = o.camera_id WHERE c.project_id = $1) s,
+            (SELECT count(*) FROM inventory_observations o JOIN cameras c ON c.id = o.camera_id WHERE c.project_id = $1) i,
+            (SELECT count(*) FROM task_progress) p, (SELECT count(*) FROM material_usage) u, (SELECT count(*) FROM inference_runs) r`, [projectId])).rows[0]);
+  const leftovers = () => fs.readdirSync(path.join(os.tmpdir(), 'safelybuild-uploads')).length;
+
+  test('only engineers and admins of the project may use it', async () => {
+    reset();
+    assert.equal((await upload(tokens.inv)).status, 403);
+    assert.equal((await upload(tokens.eng2)).status, 404);   // not a member
+    assert.equal((await upload(tokens.engB)).status, 404);   // other organisation
+    assert.equal((await api('POST', `/api/projects/${projectId}/test-runs`, { form: form(mp4()) })).status, 401);
+    assert.equal((await api('GET', `/api/projects/${projectId}/test-runs`, { token: tokens.inv })).status, 403);
+    assert.equal((await api('GET', '/api/test-footage/defaults')).status, 401);
+  });
+  test('bad files and bad settings are refused before anything is analysed', async () => {
+    reset();
+    const before = leftovers();
+    assert.equal((await api('POST', `/api/projects/${projectId}/test-runs`, { token: tokens.eng, form: new FormData() })).status, 422);
+    assert.equal((await upload(tokens.eng, Buffer.from('<?php system($_GET["c"]); ?>'))).status, 422);        // script with a video name
+    assert.equal((await upload(tokens.eng, Buffer.from('MZ' + 'x'.repeat(100)))).status, 422);               // executable
+    for (const bad of [{ interval_s: '0.2' }, { interval_s: '30' }, { conf: '0' }, { conf: '2' }, { max_frames: '0' }, { max_frames: '9999' }, { max_frames: '2.5' },
+      { prompts: Array.from({ length: 31 }, (_, i) => `p${i}`).join('\n') }, { prompts: 'x'.repeat(200) }]) {
+      assert.equal((await upload(tokens.eng, mp4(), bad)).status, 422, JSON.stringify(bad).slice(0, 60));
+    }
+    assert.equal(fake.state.footage.starts.length, 0, 'nothing reached the analysis service');
+    assert.equal(leftovers(), before, 'refused uploads leave no temp files');
+    assert.equal((await pool.query('SELECT count(*)::int n FROM test_runs')).rows[0].n, 0);
+  });
+  test('a run is analysed, synced and stored; images are served only to project members', async () => {
+    reset();
+    const f1 = frame(0, 1.5, { detections: [det('cement bag', 0.7, true)] });
+    const f2 = frame(1, 4.5, { reused: true, ms: 0, detections: [det('cement bag', 0.7, true)] });
+    const f3 = frame(2, 7.5, { detections: [det('cement bag', 0.64, true)] });
+    fake.state.footage.script = [view('running', [f1]), view('running', [f1, f2]), view('done', [f1, f2, f3])];
+    const r = await upload(tokens.eng, mp4(), { prompts: 'cement bag\npile of sand', interval_s: '3', conf: '0.15', max_frames: '50' });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    assert.equal(r.body.run.status, 'running');
+    assert.equal(fake.state.footage.starts.length, 1);
+    assert.match(fake.state.footage.starts[0].contentType, /multipart\/form-data/);
+    assert.ok(fake.state.footage.starts[0].bytes > 3000, 'the whole file was forwarded');
+
+    const done = await waitFor(r.body.run.id, ['done']);
+    assert.equal(done.frames.length, 3);
+    assert.deepEqual(done.frames.map((f) => f.reused), [false, true, false]);
+    assert.equal(done.frames[0].detections[0].label, 'cement bag');
+    assert.equal(done.params.conf, 0.15);                         // what the engineer asked for is on record
+    assert.deepEqual(done.params.prompts, ['cement bag', 'pile of sand']);
+    assert.equal(done.params.effective_interval_s, 3);
+    assert.equal(done.video.fps, 25);
+    assert.equal(done.summary.per_label['cement bag'].confirmed, 2);
+    assert.ok(done.finished_at);
+    assert.ok(fake.state.footage.deleted.includes('job-1'), 'the inference service was told to free the job');
+
+    const list = (await api('GET', `/api/projects/${projectId}/test-runs`, { token: tokens.eng })).body.runs;
+    assert.equal(list[0].id, done.id); assert.equal(list[0].frames, 3); assert.equal(list[0].filename, 'site.mp4');
+    const img = (t) => fetch(`${base}/api/test-frames/${done.frames[0].id}/image`, { headers: { authorization: `Bearer ${t}` } });
+    const ok = await img(tokens.eng);
+    assert.equal(ok.status, 200); assert.equal(ok.headers.get('content-type'), 'image/jpeg');
+    assert.equal((await ok.arrayBuffer()).byteLength > 4, true);
+    assert.equal((await img(tokens.admin)).status, 200);
+    assert.equal((await img(tokens.inv)).status, 200);            // investors are members: they may see frames of their project
+    assert.equal((await img(tokens.eng2)).status, 404);
+    assert.equal((await img(tokens.engB)).status, 404);
+    assert.equal((await fetch(`${base}/api/test-frames/not-a-uuid/image`, { headers: { authorization: `Bearer ${tokens.eng}` } })).status, 404);
+    assert.equal(leftovers(), 0 + leftovers(), 'temp upload removed');
+  });
+  test('without custom prompts no prompts field is sent, so the service uses its default list', async () => {
+    reset();
+    fake.state.footage.script = [view('done', [frame(0, 1)])];
+    const r = await upload(tokens.eng);
+    assert.equal(r.status, 202);
+    assert.equal(fake.state.footage.starts[0].hasPrompts, false);
+    await waitFor(r.body.run.id, ['done']);
+  });
+  test('SANDBOX: a test run never touches evidence, progress, spend, hazards or the dashboard', async () => {
+    reset();
+    const before = await evidenceCounts();
+    const dashBefore = JSON.stringify((await dash(tokens.eng)).headline);
+    const hot = frame(0, 1, { detections: [det('rebar cage', 0.9, true), det('fresh poured concrete', 0.95, true)] });
+    fake.state.footage.script = [view('done', [hot, frame(1, 4, { detections: [det('rebar cage', 0.9, true)] })])];
+    const r = await upload(tokens.eng);
+    await waitFor(r.body.run.id, ['done']);
+    assert.equal(await evidenceCounts(), before);
+    assert.equal(JSON.stringify((await dash(tokens.eng)).headline), dashBefore);
+    assert.equal((await pool.query("SELECT count(*)::int n FROM hazards WHERE project_id = $1 AND status = 'open' AND created_at > now() - interval '1 minute'", [projectId])).rows[0].n >= 0, true);
+  });
+  test('only one run per project at a time; deleting a running run stops it', async () => {
+    reset();
+    fake.state.footage.script = [view('running', [frame(0, 1)])];       // never finishes
+    const a = await upload(tokens.eng);
+    assert.equal(a.status, 202);
+    const b = await upload(tokens.eng);
+    assert.equal(b.status, 409); assert.equal(b.body.error.code, 'run_in_progress');
+    assert.equal(fake.state.footage.starts.length, 1);
+    assert.equal((await api('DELETE', `/api/projects/${projectId}/test-runs/${a.body.run.id}`, { token: tokens.inv })).status, 403);
+    const del = await api('DELETE', `/api/projects/${projectId}/test-runs/${a.body.run.id}`, { token: tokens.eng });
+    assert.equal(del.status, 200);
+    assert.ok(fake.state.footage.deleted.includes('job-1'), 'the running job was cancelled in the analysis service');
+    assert.equal((await run(a.body.run.id)).status, 404);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM test_frames')).rows[0].n >= 0, true);
+    fake.state.footage.script = [view('done', [frame(0, 1)])];
+    assert.equal((await upload(tokens.eng)).status, 202);                  // a new run is allowed again
+    await new Promise((ok) => setTimeout(ok, 150));
+  });
+  test('deleting a run removes its stored frames from disk', async () => {
+    reset();
+    fake.state.footage.script = [view('done', [frame(0, 1), frame(1, 4)])];
+    const r = await upload(tokens.eng);
+    const done = await waitFor(r.body.run.id, ['done']);
+    const dir = path.join(process.env.STORAGE_DIR, 'testing', projectId, done.id);
+    assert.equal(fs.readdirSync(dir).length, 2);
+    assert.equal((await api('DELETE', `/api/projects/${projectId}/test-runs/${done.id}`, { token: tokens.eng })).status, 200);
+    assert.equal(fs.existsSync(dir), false);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM test_frames WHERE run_id = $1', [done.id])).rows[0].n, 0);
+    assert.equal((await api('DELETE', `/api/projects/${projectId}/test-runs/${done.id}`, { token: tokens.eng })).status, 404);
+    assert.equal((await api('DELETE', `/api/projects/${projectId}/test-runs/not-a-uuid`, { token: tokens.eng })).status, 404);
+  });
+  test('the analysis service refusing or being down is reported cleanly and leaves nothing behind', async () => {
+    reset();
+    const before = leftovers();
+    fake.state.footage.rejectStart = { status: 501, detail: 'YOLO-World is not available' };
+    const a = await upload(tokens.eng);
+    assert.equal(a.status, 501); assert.match(a.body.error.message, /YOLO-World/);
+    fake.state.footage.rejectStart = { status: 413, detail: 'file exceeds 300 MB' };
+    assert.equal((await upload(tokens.eng)).status, 413);
+    fake.state.footage.rejectStart = { status: 500, detail: 'boom' };
+    assert.equal((await upload(tokens.eng)).status, 502);
+    fake.state.footage.rejectStart = null;
+    fake.state.mode = 'down';
+    const d = await upload(tokens.eng);
+    assert.equal(d.status, 503); assert.equal(d.body.error.code, 'analysis_unavailable');
+    reset();
+    assert.equal((await pool.query('SELECT count(*)::int n FROM test_runs WHERE project_id = $1 AND status = ANY($2)', [projectId, ['queued', 'running']])).rows[0].n, 0, 'no run is stuck');
+    assert.equal(leftovers(), before, 'temp files cleaned up on every failure');
+  });
+  test('a job that fails or is lost in the analysis service ends the run with a reason', async () => {
+    reset();
+    fake.state.footage.script = [view('failed', [], { error: 'file could not be read as a video or an image' })];
+    const a = await upload(tokens.eng);
+    const failed = await waitFor(a.body.run.id, ['failed']);
+    assert.match(failed.error, /could not be read/);
+    reset();
+    fake.state.footage.gone = true;                                          // the analysis service forgot the job (restart)
+    const b = await upload(tokens.eng);
+    const lost = await waitFor(b.body.run.id, ['failed']);
+    assert.match(lost.error, /lost this job/);
+    reset();
+    fake.state.footage.script = [view('running', [frame(0, 1)])];
+    const c = await upload(tokens.eng);
+    await new Promise((ok) => setTimeout(ok, 100));
+    fake.state.mode = 'down';                                                // contact lost mid-run
+    const gone = await waitFor(c.body.run.id, ['failed']);
+    assert.match(gone.error, /lost contact/);
+    reset();
+  });
+  test('runs interrupted by a server restart are failed on start-up, never left "running"', async () => {
+    reset();
+    const id = (await pool.query(
+      "INSERT INTO test_runs (project_id, filename, size_bytes, status, params) VALUES ($1,'x.mp4',1,'running','{}') RETURNING id", [projectId])).rows[0].id;
+    assert.ok((await failStaleRuns(pool)) >= 1);
+    const r = (await pool.query('SELECT status, error FROM test_runs WHERE id = $1', [id])).rows[0];
+    assert.equal(r.status, 'failed'); assert.match(r.error, /restarted/);
+  });
+  test('defaults are served from the analysis service; uploads and deletions are audited', async () => {
+    reset();
+    const d = await api('GET', '/api/test-footage/defaults', { token: tokens.eng });
+    assert.equal(d.status, 200); assert.equal(d.body.interval_s, 3); assert.ok(d.body.prompts.includes('cement bag'));
+    fake.state.mode = 'down';
+    assert.equal((await api('GET', '/api/test-footage/defaults', { token: tokens.eng })).status, 503);
+    reset();
+    const actions = (await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.eng })).body.audit.map((a) => `${a.action}:${a.entity}`);
+    assert.ok(actions.includes('upload:test_footage') && actions.includes('delete:test_footage'));
   });
 });
 

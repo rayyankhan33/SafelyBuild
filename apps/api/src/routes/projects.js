@@ -1,15 +1,21 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { pool } from '../db/pool.js';
 import {
   audit, bad, isoDate, notFound, parse, projectAccess, requireAuth, requireRole, uuid, wrap,
 } from '../http.js';
+import { config } from '../config.js';
 import { today } from '../domain/dates.js';
 import { validateElement } from '../domain/estimation.js';
 import * as storage from '../storage.js';
 import { buildDashboard, recompute } from '../services/forecast.js';
 import { createCamera, listCameras, setCameraActive } from '../services/ingest.js';
 import { listNotifications, markAllRead, markRead } from '../services/notifications.js';
+import * as testfootage from '../services/testfootage.js';
 import {
   createEstimate, createProject, generateProjectSchedule, getActiveEstimate, getSchedule, listSiteStatus, loadRates, setPriceBook, setSiteStatus,
 } from '../services/projects.js';
@@ -198,6 +204,45 @@ router.get('/media/:id/file', wrap(async (req, res) => {
   }
   const bytes = await storage.read(m.storage_key); // read first: an error must not carry cache headers
   res.set('Content-Type', m.content_type).set('Cache-Control', 'private, max-age=3600').send(bytes);
+}));
+
+// ------------------------------------------------------------------ TEMPORARY: test footage (docs/temporary-features.md)
+// Sandbox for trying the vision model on uploaded footage. Results never enter progress, spend, hazards or forecasts.
+const uploadDir = path.join(os.tmpdir(), 'safelybuild-uploads');
+fs.mkdirSync(uploadDir, { recursive: true });
+const footageUpload = multer({ dest: uploadDir, limits: { fileSize: config.testUploadMaxBytes, files: 1 } });
+
+router.get('/test-footage/defaults', wrap(async (_req, res) => res.json(await testfootage.getDefaults())));
+router.get('/projects/:pid/test-runs', staff, wrap(async (req, res) => res.json({ runs: await testfootage.listRuns(pool, req.project.id) })));
+router.post('/projects/:pid/test-runs', staff, footageUpload.single('file'), wrap(async (req, res) => {
+  const tmp = req.file?.path;
+  try {
+    if (!req.file) throw bad("attach a video or image in the 'file' field");
+    const type = testfootage.sniffFootageType(await testfootage.readHead(tmp));
+    if (!type) throw bad('unsupported file: upload an MP4/MOV, AVI or WebM/MKV video, or a JPEG, PNG, WebP or BMP image');
+    const params = testfootage.validateParams(req.body ?? {});
+    const run = await testfootage.startRun(pool, req.project, req.user, { tmpPath: tmp, filename: req.file.originalname || 'upload', size: req.file.size, params });
+    await audit(pool, req, 'upload', 'test_footage', run.id, { filename: req.file.originalname, bytes: req.file.size });
+    res.status(202).json({ run });
+  } catch (e) {
+    if (tmp) fs.rmSync(tmp, { force: true }); // startRun removes it too; this covers failures before it
+    throw e;
+  }
+}));
+router.get('/projects/:pid/test-runs/:rid', staff, wrap(async (req, res) => {
+  if (!uuid.safeParse(req.params.rid).success) throw notFound('test run');
+  res.json({ run: await testfootage.getRun(pool, req.project.id, req.params.rid) });
+}));
+router.delete('/projects/:pid/test-runs/:rid', staff, wrap(async (req, res) => {
+  if (!uuid.safeParse(req.params.rid).success) throw notFound('test run');
+  const run = await testfootage.deleteRun(pool, req.project.id, req.params.rid);
+  await audit(pool, req, 'delete', 'test_footage', run.id, { filename: run.filename });
+  res.json({ ok: true });
+}));
+router.get('/test-frames/:id/image', wrap(async (req, res) => {
+  if (!uuid.safeParse(req.params.id).success) throw notFound('frame');
+  const bytes = await testfootage.frameImage(pool, req.user, req.params.id);
+  res.set('Content-Type', 'image/jpeg').set('Cache-Control', 'private, max-age=3600').send(bytes);
 }));
 
 // ------------------------------------------------------------------ dashboard, alerts, audit

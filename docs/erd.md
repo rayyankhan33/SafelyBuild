@@ -321,6 +321,33 @@ erDiagram
     numeric percent_complete
     text source
   }
+  test_frames {
+    uuid id PK
+    uuid run_id FK
+    integer i
+    numeric t_s
+    numeric sharpness
+    boolean reused
+    integer ms
+    jsonb detections
+    text storage_key
+  }
+  test_runs {
+    uuid id PK
+    uuid project_id FK
+    uuid user_id FK
+    text filename
+    bigint size_bytes
+    text status
+    text error
+    text job_id
+    jsonb params
+    jsonb video
+    jsonb progress
+    jsonb summary
+    timestamp_with_time_zone created_at
+    timestamp_with_time_zone finished_at
+  }
   users {
     uuid id PK
     uuid org_id FK
@@ -391,5 +418,8 @@ erDiagram
   schedule_tasks ||--o{ task_dependencies : "task_id"
   daily_logs ||--o{ task_progress : "daily_log_id"
   schedule_tasks ||--o{ task_progress : "task_id"
+  test_runs ||--o{ test_frames : "run_id"
+  projects ||--o{ test_runs : "project_id"
+  users |o--o{ test_runs : "user_id"
   organizations ||--o{ users : "org_id"
 ```

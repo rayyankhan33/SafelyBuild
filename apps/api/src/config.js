@@ -18,6 +18,9 @@ export const config = {
   inferenceTimeoutMs: Number(env.INFERENCE_TIMEOUT_MS || 60_000),
   storageDir: env.STORAGE_DIR || path.join(repoRoot, 'storage'),
   maxUploadBytes: 15 * 1024 * 1024,
+  // TEMPORARY test-footage feature (docs/temporary-features.md)
+  testUploadMaxBytes: Number(env.MAX_TEST_UPLOAD_MB || 300) * 1024 * 1024,
+  testUploadTimeoutMs: Number(env.TEST_UPLOAD_TIMEOUT_MS || 10 * 60_000),
   // Site local time is UTC+5 (Pakistan): a frame's "day" is its local calendar date.
   siteUtcOffsetHours: Number(env.SITE_UTC_OFFSET_HOURS || 5),
   // Frames whose camera clock differs from the server by more than this are rejected (replay / clock tampering).

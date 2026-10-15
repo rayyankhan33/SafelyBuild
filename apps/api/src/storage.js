@@ -20,6 +20,16 @@ export async function put(projectId, buffer, contentType) {
 
 export const read = (key) => fs.readFile(resolve(key));
 
+// TEMPORARY test-footage frames live under testing/, apart from evidence.
+export async function putTestFrame(projectId, runId, i, buffer) {
+  const key = `testing/${projectId}/${runId}/${i}.jpg`;
+  const file = resolve(key);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, buffer);
+  return key;
+}
+export const removeTestRun = (projectId, runId) => fs.rm(resolve(`testing/${projectId}/${runId}`), { recursive: true, force: true });
+
 function resolve(key) {
   const full = path.resolve(config.storageDir, key);
   // refuse keys that escape the storage directory (path traversal)
