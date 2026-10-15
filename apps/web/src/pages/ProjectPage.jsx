@@ -9,8 +9,10 @@ import Schedule from './engineer/Schedule.jsx';
 import SiteStatus from './engineer/SiteStatus.jsx';
 import Evidence from './engineer/Evidence.jsx';
 import Risk from './engineer/Risk.jsx';
+import Access from './engineer/Access.jsx';
 
-const TABS = [['overview', 'Overview'], ['design', 'Design & estimate'], ['schedule', 'Schedule'], ['site', 'Crews & equipment'], ['evidence', 'Evidence'], ['risk', 'Risk & safety']];
+const BASE_TABS = [['overview', 'Overview'], ['design', 'Design & estimate'], ['schedule', 'Schedule'], ['site', 'Crews & equipment'], ['evidence', 'Evidence'], ['risk', 'Risk & safety']];
+const ADMIN_TAB = ['access', 'Access'];
 
 export default function ProjectPage() {
   const { id } = useParams();
@@ -18,6 +20,7 @@ export default function ProjectPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('overview');
+  const TABS = role === 'admin' ? [...BASE_TABS, ADMIN_TAB] : BASE_TABS;
 
   const reload = useCallback(async () => {
     try { setData(await api('GET', `/projects/${id}/dashboard`)); setError(''); } catch (e) { setError(e.message); }
@@ -53,6 +56,7 @@ export default function ProjectPage() {
       {tab === 'site' && <SiteStatus pid={id} reload={reload} />}
       {tab === 'evidence' && <Evidence pid={id} data={data} reload={reload} />}
       {tab === 'risk' && <Risk data={data} />}
+      {tab === 'access' && role === 'admin' && <Access pid={id} />}
     </>
   );
 }

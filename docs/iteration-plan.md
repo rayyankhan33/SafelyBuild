@@ -7,8 +7,8 @@ Owners are **proposed** from the proposal's work division; the team should confi
 | Iteration | Window | Goal |
 |---|---|---|
 | Sprint 1 (this) | Oct 2026 | Platform: schema, API, automated evidence pipeline, both dashboards, tests, docs |
-| Sprint 2 | Nov-Dec 2026 | **Real footage and measured accuracy**: collect and label real site frames, evaluate every backend, integrate the teammate's trained model, calibrate stock constants and the noise deadband, camera-tamper checks |
-| Sprint 3 | Feb-Mar 2027 | Fine-tuned models in production use, extra defect and hazard classes, drawing-assisted BOQ, investor reports, Docker deployment |
+| Sprint 2 | Nov-Dec 2026 | **Real footage and measured accuracy**: collect and label real site frames, evaluate every backend, integrate the teammate's trained model, calibrate stock constants and the noise deadband, camera-tamper checks. **Total cost** (labour, equipment, overheads; entered once by the engineer; locked rates) and the **completion lifecycle** (D1, D2, D4) |
+| Sprint 3 | Feb-Mar 2027 | Fine-tuned models in production use, extra defect and hazard classes, drawing-assisted BOQ, **change control with two approvals (D3)**, crew-count cross-check, investor reports, Docker deployment |
 | Sprint 4 | Apr-May 2027 | Pilot on a real site, threshold calibration, final validation |
 
 ## Sprint 1 work breakdown
@@ -27,7 +27,7 @@ Owners are **proposed** from the proposal's work division; the team should confi
 | 10 | Investor dashboard (plain language, evidence note, demo banner) | Atyab | Done | `apps/web/src/pages/Investor.jsx` |
 | 11 | Engineer views (overview, design, schedule, crews & equipment, evidence, read-only risk) | Atyab | Done | `apps/web/src/pages/engineer` |
 | 12 | Demo data through the real pipeline with fidelity report | Rayyan | Done | `npm run db:reseed` |
-| 13 | Test suite and results log | All | Done (230 tests) | docs/test-results.md |
+| 13 | Test suite and results log | All | Done (261 tests) | docs/test-results.md |
 | 14 | Docker packaging | Atyab | Written, **not run** | docker-compose.yml |
 | 15 | **Real-footage evaluation of all backends** | Hadi + teammate | **Not started** (no labelled real photos) | - |
 | 16 | **Trained model integrated and measured** | Teammate | **In progress by teammate** for rust/honeycomb (not in repo). **Cracks: done as a plugin** (Rayyan): MobileNetV3 trained on SDNET2018, measured on held-out photographs (AUC 0.88) and on an out-of-domain check that shows many false alarms; opt-in, not active; no real CCTV footage yet | docs/model-integration.md, [crack-model.md](crack-model.md), `plugins/crack_cnn.py`, `tests/test_crack.py` |
@@ -36,6 +36,9 @@ Owners are **proposed** from the proposal's work division; the team should confi
 | 18 | Camera tamper checks (lens covered, redirected) | Rayyan | **Not started** | design.md section 10 |
 | 19 | UI automated tests | Atyab | **Not started** | - |
 | 20 | Mid report text (R&D, gap analysis) | All | **Team to write** | - |
+| 21 | Total cost: engineer-entered, locked inception rates, labour/equipment/overhead accrual, breakdown (FR-34, FR-35) | Rayyan | **Decided 2026-10-13, not built** (Sprint 2) | docs/proposal-revised.md D1, D2 |
+| 22 | Completion lifecycle: placed / curing / finished / inspected with evidence-cleared warnings (FR-36) | Rayyan + Hadi | **Decided, not built** (Sprint 2) | docs/proposal-revised.md D4 |
+| 23 | Change control with administrator + investor approval and versioned baselines (FR-37) | Rayyan | **Decided, not built** (Sprint 3) | docs/proposal-revised.md D3 |
 
 Recovery plan for items 15-19: weekly demonstrable milestones in Sprint 2. Week 1: collect and label 100 real frames (zone, yard) with `export-training-set.mjs`. Week 2: baseline report from `evaluate.py` for every backend. Week 3: the teammate's model measured with the same harness and activated if it beats the baseline. Week 4: calibrate stock constants and the deadband on real frames; first tamper check.
 
@@ -45,6 +48,6 @@ Recovery plan for items 15-19: weekly demonstrable milestones in Sprint 2. Week 
 |---|---|---|
 | 2026-09-07 | POC committed (Streamlit, YOLO-World zero-shot, heuristics, SQLite) - see `git log` | Team to confirm demo status |
 | 2026-10-11 | First platform cut: API, database, inference service, web app, 116 tests (engineer-typed data entry) | Yes: `npm run test:all` |
-| 2026-10-12 | Automated-evidence redesign: cameras only, no human path to evidence, derived hazards, plug-in model registry, 230 tests; measured fidelity on synthetic frames: work done -1.0 %, spend -1.6 % | Yes: `npm run test:all`, `npm run dev` demo, tamper demo in test-plan.md |
+| 2026-10-12 | Automated-evidence redesign: cameras only, no human path to evidence, derived hazards, plug-in model registry, 261 tests; measured fidelity on synthetic frames: work done -1.0 %, spend -1.6 % | Yes: `npm run test:all`, `npm run dev` demo, tamper demo in test-plan.md |
 
 Add a row for every claimed milestone with a live-demo confirmation. Do not mark anything done that cannot be shown running.

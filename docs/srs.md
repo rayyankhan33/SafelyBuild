@@ -51,8 +51,8 @@ Version 0.2 (Sprint 1, revised for the automated-evidence design). Every require
 | Role | Needs | Access |
 |---|---|---|
 | Investor | Plain-language progress, spend, forecast, safety; photos | Read-only on projects they belong to |
-| Site engineer | Enter BOQ/budget, crews and equipment; see technical detail, standards, hazards, warnings | BOQ, estimate, schedule, crews and equipment on their projects; read everything else |
-| Administrator | Install cameras, maintain price book, create users, add members | Whole organisation |
+| Site engineer (the project's lead engineer) | Create projects; enter BOQ/budget, crews and equipment; see technical detail, standards, hazards, warnings | Create projects; BOQ, estimate, schedule, crews and equipment on their projects; read everything else |
+| Administrator | Manage accounts (create and delete), add members to projects, install cameras, maintain the price book; is notified when an engineer creates a project. **Does not create projects** | Whole organisation |
 | Camera | Submit frames | Only `POST /api/ingest/frame`, with its own key |
 
 ## 3. Functional requirements
@@ -61,7 +61,7 @@ Version 0.2 (Sprint 1, revised for the automated-evidence design). Every require
 |---|---|---|---|
 | FR-01 | Email and password sign-in with a time-limited token; identical error for wrong password and unknown user; 5 failures per 15 minutes per email and address are blocked; disabled accounts cannot sign in or use old tokens | Wrong credentials 401 with the same message; 6th attempt 429 | TC-API-AUTH |
 | FR-02 | Data is isolated per organisation and project; another organisation's project returns 404; non-members get 404; admins see their organisation | Cross-tenant and non-member requests 404 | TC-API-RBAC |
-| FR-03 | Investors are read-only on every endpoint. Engineers cannot touch cameras, price book or users. | 403 on writes | TC-API-RBAC, TC-API-CAM |
+| FR-03 | Investors are read-only on every endpoint. Engineers cannot touch cameras, price book or users. **Only engineers create projects; administrators and investors cannot.** | 403 on writes; admin and investor project creation 403 | TC-API-RBAC, TC-API-CAM, TC-API-ACCT |
 | FR-04 | Engineers enter design elements with dimensions, quantity and concrete strength; missing or non-positive dimensions are rejected naming the field | 422 with field | TC-API-SETUP |
 | FR-05 | The estimate computes concrete mix per m3 by the ACI 211.1 absolute-volume method (required strength from ACI 318), purchase quantities from loose bulk density (compaction factor), wastage, price-book prices in PKR and contingency; strengths outside the ACI table are refused, not extrapolated | Hand-checked 25 MPa mix (water 193, cement about 391, coarse 1072 kg/m3) | TC-ACI, TC-EST |
 | FR-06 | Steel below the ACI 318 minimum for columns and slabs raises an advisory warning | Warning `ACI318_MIN_STEEL` | TC-EST |
@@ -89,9 +89,24 @@ Version 0.2 (Sprint 1, revised for the automated-evidence design). Every require
 | FR-28 | Alerts for budget, schedule, safety and evidence conditions: one open alert per condition, auto-resolved, investor and engineer wording | Diff logic | TC-ALR |
 | FR-29 | The investor dashboard shows progress vs plan, money spent, expected final cost and overrun, expected finish and days late/early, safety light, productivity, evidence note, alerts and photos in plain words, with no SDI/CPI/EAC/ALARP terms and no engineering sections | Payload lacks `risk`, `standards`, `estimate`, `inventory` | TC-API-RBAC, TC-ALR |
 | FR-30 | The engineer dashboard adds the indices and formulas, SDI breakdown, risk matrix, hazards with category/zone/standard/controls and clean-day count, defects on annotated frames, estimate and mixes, standards used, stock history, crews and equipment, camera health and the latest frames with what was measured | Payload contents | TC-API-RBAC |
-| FR-31 | Every mutation and every ingest is written to an audit log | Rows exist; investors cannot read | TC-API-AUDIT |
+| FR-31 | Every mutation and every ingest is written to an audit log. Each entry records the actor as a user id and as text, so the trail still names the person after their account is deleted | Rows exist; investors cannot read; name survives deletion | TC-API-AUDIT, TC-API-ACCT |
+| FR-39 | **When an engineer creates a project, every active administrator of the organisation receives an in-app notification** (creator, project name, location, start date), created in the same transaction as the project. Nobody else is notified; another organisation's admins are not notified; a refused creation sends nothing. Each user sees only their own notifications and can mark one or all as read | Admin unread count rises by one per admin; creator, investor and other organisations see nothing; marking another user's notification is 404 | TC-API-ACCT |
+| FR-40 | **Administrators can delete accounts in their own organisation**, not their own account and not another organisation's. A deleted account's sign-in and tokens stop working immediately. Projects, estimates, frames and alerts it created are kept (no longer attributed to a user); its memberships and notifications are removed; the deletion is audited with the person's name, email and role | 403 for non-admins; 409 on self; 404 cross-organisation; token 401 after deletion; project kept with `created_by` null | TC-API-ACCT |
+| FR-41 | Administrators add and remove the people who can see each project (they see every project in their organisation themselves). Removal takes effect at once | Member sees the project only while listed | TC-API-ACCT |
 | FR-32 | Analysis backends are pluggable per task (defects, stage, inventory). A plugin module is discovered at start-up, is never activated silently, can be tried with `?backend=`, can be selected by environment or `models/active.json`, and is refused with a clear reason if missing, unavailable or not serving the task. A harness measures any backend on labelled images | Plugin tests; evaluation tests | TC-REG, evaluate tests |
 | FR-33 | `npm run db:seed` builds a demo project by simulating site truth, rendering synthetic frames and passing them through the real pipeline; the project is flagged `is_demo` and the UI says so; the seed prints measured vs true spend and work done | Fidelity line; UI banner | manual demo |
+
+## 3a. Decided but not yet built (Sprint 2-3)
+
+The team decided on 2026-10-13 that the system must cover total cost, lock inception rates, require approval by both the administrator and an investor for changes, and track completion beyond "placed". These are **requirements, not features of the current code**; the current code covers materials only and has no inception labour/equipment inputs, no change control and no completion lifecycle. See [proposal-revised.md](proposal-revised.md).
+
+| ID | Requirement | Planned |
+|---|---|---|
+| FR-34 | The engineer (the project's lead engineer; no separate role) enters labour rates, equipment hire rates, planned crews and equipment, and formwork, overhead and contingency lines once at inception; they are locked afterwards | Sprint 2 |
+| FR-35 | Labour (crews x rate) and equipment (units x hire rate) accrue each day as actual cost; forecasts and the investor dashboard use total cost with a breakdown | Sprint 2 |
+| FR-36 | Each element shows placed / curing / finished / inspected states; a task shown as done carries a warning for each step not yet evidenced; warnings clear only on evidence (elapsed curing time from the measured pour date, images for finished, automated visual inspection) | Sprint 2 |
+| FR-37 | A change to the budget, rates or baseline needs approval by the administrator and by an investor member of the project (one recorded investor approval), creates a new baseline version, and keeps all earlier versions and approvals | Sprint 3 |
+| FR-38 | Crew counts are cross-checked against worker counts from the cameras and large disagreement raises an alert | Sprint 3 |
 
 ## 4. Non-functional requirements
 
@@ -100,7 +115,7 @@ Version 0.2 (Sprint 1, revised for the automated-evidence design). Every require
 | NFR-01 Security | Passwords hashed (bcrypt); tokens expire (12 h); login rate limit; cross-tenant access hidden as 404; camera keys hashed, constant-time compare; uploads validated by content; storage keys cannot escape the storage directory; JWT secret mandatory in production | TC-API-AUTH, TC-API-INGEST, TC-API-RBAC |
 | NFR-02 Tamper resistance | No human path to create, edit or delete progress, spend, defects, hazards or frames; enforced by missing routes, strict input schemas and database constraints, not by UI hiding | TC-API-NOHUMAN, TC-SCHEMA |
 | NFR-03 Reliability | Every call to the inference service has a timeout; its failure never loses a frame | TC-API-FAIL |
-| NFR-04 Integrity | Invariants enforced in the database: bounded ratings, ordered dates, non-negative money, one log per project-day, one open alert per key, one copy of a frame per camera, cascade on project delete | TC-SCHEMA |
+| NFR-04 Integrity | Invariants enforced in the database: bounded ratings, ordered dates, non-negative money, one log per project-day, one open alert per key, one copy of a frame per camera, cascade on project delete; every reference to a user survives that user's deletion (nullable references become NULL, membership and notifications are removed) | TC-SCHEMA |
 | NFR-05 Reproducibility and traceability | Idempotent migrations; ER diagram generated from the live schema with a drift test; roll-up replay; every analysis stamped with model and version; estimates store their inputs | TC-SCHEMA, TC-API-MEASURE |
 | NFR-06 Explainability | Every displayed figure has a documented formula and an engineer-view method note | Review |
 | NFR-07 Accessibility | Status never by colour alone (icon + label); chart data as tables; light and dark themes; phone-width layouts | Manual review |
@@ -116,4 +131,5 @@ Version 0.2 (Sprint 1, revised for the automated-evidence design). Every require
 3. Stock from images assumes cone-shaped piles, stack heights and packing densities (documented constants) and a calibrated ground scale per yard camera. A delivery arriving mid-day hides that day's consumption. Quantities are noisy on real images; the 2 % deadband was chosen for the near-noiseless synthetic frames and must be re-tuned.
 4. Spend covers bulk materials only. Default prices and productivity are placeholders.
 5. Camera tampering (lens covered, camera redirected) is not yet detected; only silence is.
+5a. Crew counts and equipment are typed by engineers and are the one input that affects cost; they are not yet cross-checked against the cameras. Curing cannot be verified from images, only timed. Automated visual inspection is not a structural test.
 6. ACI table values are transcribed for one case (non-air-entrained, slump 75-100 mm, fineness modulus 2.8, max aggregate 19/25/37.5 mm); verify against licensed copies.

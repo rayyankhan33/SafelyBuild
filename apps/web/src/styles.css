@@ -93,3 +93,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .err { color: var(--critical); } .ok { color: var(--good-text); }
 .note { background: var(--soft); border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--ink-2); }
 @media (max-width: 640px) { .page { padding: 16px 12px 48px; } .topbar { padding: 10px 12px; } }
+
+/* notification bell */
+.bell { position: relative; }
+.bell-btn { position: relative; padding: 6px 10px; line-height: 1; }
+.bell-count { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--critical); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.bell-menu { position: absolute; right: 0; top: calc(100% + 6px); width: min(380px, 92vw); max-height: 70vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.18); z-index: 20; }
+.bell-item { display: block; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--grid); border-radius: 0; padding: 10px 12px; background: none; }
+.bell-item.unread { background: var(--soft); }
+.bell-item:hover { background: var(--soft); }

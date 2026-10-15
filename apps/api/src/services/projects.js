@@ -5,6 +5,7 @@ import { bad, HttpError, notFound } from '../http.js';
 import { estimate as runEstimate, validateElement } from '../domain/estimation.js';
 import { generateSchedule } from '../domain/schedule.js';
 import { diffDays, today } from '../domain/dates.js';
+import { notifyAdmins } from './notifications.js';
 
 const num = (x) => (x === null || x === undefined ? x : Number(x));
 
@@ -41,6 +42,11 @@ export async function createProject(db, user, { name, location, description, sta
       [user.org_id, name, location ?? null, description ?? null, start_date, user.id]);
     const p = rows[0];
     await c.query('INSERT INTO project_members (project_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [p.id, user.id]);
+    // every admin of the organisation is told, in the same transaction
+    await notifyAdmins(c, user.org_id, {
+      kind: 'project_created', projectId: p.id, title: 'New project created',
+      body: `${user.full_name} (${user.role}) created the project "${p.name}"${p.location ? ` in ${p.location}` : ''}, starting ${p.start_date}. Add the investors who should follow it.`,
+    });
     return p;
   });
 }

@@ -1,24 +1,25 @@
 # Test plan and early validation
 
-Results of the latest full run are generated into [test-results.md](test-results.md) by `npm run test:all` (needs PostgreSQL: `npm run dev` or `npm run db:start`). Counts below were true on 2026-10-13; re-run before quoting them.
+Results of the latest full run are generated into [test-results.md](test-results.md) by `npm run test:all` (needs PostgreSQL: `npm run dev` or `npm run db:start`). Counts below were true on 2026-10-15; re-run before quoting them.
 
 ## 1. Strategy
 
 | Level | Tool | What it proves | Tests |
 |---|---|---|---|
-| Unit (pure domain) | Node test runner | Formulas against hand-calculated values: dates, ACI mix, estimate, schedule, earned value, SDI and ALARP, stages, stock, derived hazards, camera health, alerts, wording | 80 (dates/ACI 10, estimate/schedule 15, EVM/risk/alerts 23, evidence-driven logic 31) |
-| Integration (API + real PostgreSQL + fake inference server) | Node test runner, `fetch` | Auth, RBAC, no human path to evidence, cameras, ingest security, measurement, failures, multi-day hazards and evidence health, audit | 53 |
+| Unit (pure domain) | Node test runner | Formulas against hand-calculated values: dates, ACI mix, estimate, schedule, earned value, SDI and ALARP, stages, stock, derived hazards, camera health, alerts, wording | 80 (dates/ACI 10, estimate/schedule 15, EVM/risk/alerts 24, evidence-driven logic 31) |
+| Integration (API + real PostgreSQL + fake inference server) | Node test runner, `fetch` | Auth, RBAC, accounts and notifications, no human path to evidence, cameras, ingest security, measurement, failures, multi-day hazards and evidence health, audit | 61 |
 | Schema / design consistency | Node test runner | ER diagram equals live schema, migrations repeatable, constraints hold (cameras, replay, manual hazards, ratings, dates, money) | 14 |
-| Inference service | pytest + FastAPI TestClient | Detection on real sample photos, stage and stock on synthetic scenes, HTTP errors, plugin registry, evaluation harness; crack model (stub-model logic, CCTV temporal confirmation, registry integration, real-model checks on held-out SDNET patches) | 106 (including parametrised cases; 1 opt-in YOLO test skipped) |
+| Inference service | pytest + FastAPI TestClient | Detection on real sample photos, stage and stock on synthetic scenes, HTTP errors, plugin registry, evaluation harness; crack model (stub-model logic, CCTV temporal confirmation, registry integration, real-model checks on held-out SDNET patches) | 106 (including parametrised cases) |
 | Manual / demo | Browser | UI behaviour, both roles, failure demo | section 4 |
 
-Total automated: **230** (145 Node + 85 Python). On a machine with the optional YOLO weights installed, 2 "backend unavailable" tests skip and 1 opt-in YOLO test is skipped unless `RUN_YOLO_TESTS=1` (3 skipped, 227 run). Integration tests use a separate database (`safelybuild_test`) wiped each run. The inference server is faked in Node so failure modes can be forced; the real Python service is tested separately and used in the demo.
+Total automated: **261** (155 Node + 106 Python). On a machine with the optional YOLO weights installed, 2 "backend unavailable" tests skip and 1 opt-in YOLO test is skipped unless `RUN_YOLO_TESTS=1` (3 skipped, 258 run). Integration tests use a separate database (`safelybuild_test`) wiped each run. The inference server is faked in Node so failure modes can be forced; the real Python service is tested separately and used in the demo.
 
 ## 2. Case catalogue (by requirement)
 
 | Requirement | Test group | Examples of edge and failure cases |
 |---|---|---|
 | FR-01 | TC-API-AUTH | wrong password = unknown user message; 6th failed attempt blocked even with the right password; disabled account; garbage token; duplicate email; short password |
+| FR-39 to FR-41 | **TC-API-ACCT** | admin and investor refused project creation; every admin notified (a second admin included), creator, investor and another organisation not; refused creation sends nothing; read one / read all / someone else's notification 404; admin deletes accounts, not own (409), not other organisation's (404), unknown or malformed id 404, non-admins 403; deleted user's token 401 and password refused at once; their project and estimate kept with no owner; audit still names them; deleting a user with notifications works; admin adds and removes project members and access ends immediately |
 | FR-02, FR-03 | TC-API-RBAC | other organisation gets 404; non-member 404; investor refused on 5 write endpoints; malformed project id gives 404 not 500 |
 | FR-04 to FR-08 | TC-EST, TC-ACI, TC-SCH, TC-API-SETUP | missing dimension, zero size, no grade, empty BOQ, contingency 80 %, strength 40 MPa refused, unsupported aggregate, steel below ACI 318 minimum, Sunday start, minimum duration, price-book edits by engineer refused, schedule regeneration needs confirmation |
 | FR-09, FR-24, NFR-02 | **TC-API-NOHUMAN**, TC-SCHEMA | the Sprint 1 routes for typed progress, spend, photos and hazards return 404 for engineer and admin; site status refuses `progress`, `materials`, `notes`, `hazards_closed`, `workers_present`; negative crews, blank equipment, future and year-old dates; database refuses manual hazards and closures without a date |

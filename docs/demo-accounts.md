@@ -7,7 +7,7 @@ Never use these on a shared or public deployment: the password is in the source 
 |---|---|---|---|
 | Investor (read-only, plain language) | `investor@demo.safelybuild.test` | `SafelyBuild-Demo-1` | Bilal Chaudhry |
 | Site engineer (BOQ/budget, crews, equipment; technical view) | `engineer@demo.safelybuild.test` | `SafelyBuild-Demo-1` | Ayesha Malik |
-| Administrator (also installs cameras, edits the price book) | `admin@demo.safelybuild.test` | `SafelyBuild-Demo-1` | Demo Admin |
+| Administrator (manages accounts and project access, installs cameras, edits the price book; **cannot create projects**) | `admin@demo.safelybuild.test` | `SafelyBuild-Demo-1` | Demo Admin |
 
 The demo project "Margalla Heights - Residential Block A" is flagged **demo**: its camera frames are synthetic drawings (a "Demo project" banner appears in both views). Both the investor and the engineer are members of it.
 
@@ -25,7 +25,9 @@ The demo project "Margalla Heights - Residential Block A" is flagged **demo**: i
 - Evidence: cameras and their health, latest frames and what was measured.
 - Risk & safety: read-only danger index breakdown, risk matrix, hazards (categories, ALARP zone, bow-tie, automatic closing).
 
-**Administrator** (signed in as Demo Admin): everything the engineer sees, plus "Install a camera" in the Evidence tab (the key is shown once) and an editable price book.
+**Administrator** (signed in as Demo Admin): sees every project but has no "start a new project" form. Extras: the **Accounts** page (create and delete accounts; no delete button on your own row), an **Access** tab on each project (add or remove who can see it), "Install a camera" in the Evidence tab (the key is shown once), an editable price book, and the **bell** in the top bar.
+
+**Try the notification:** sign in as the engineer and create a project; then sign in as the admin: the bell shows an unread count and a "New project created" message naming the engineer and the project (clicking it opens the project). The demo already contains one, for the seeded project.
 
 ## Trying the camera path yourself
 

@@ -35,7 +35,7 @@ Useful scripts: `scripts/camera-sim.mjs` (act as a camera), `scripts/export-trai
 ```
 apps/api/src/
   domain/      pure logic: dates, aci211, estimation, schedule, stages, inventory, evm, risk, evidence, narrative, alerts
-  services/    projects.js (BOQ, price book, estimate, schedule, site status), ingest.js (cameras, frames),
+  services/    projects.js (BOQ, price book, estimate, schedule, site status), notifications.js, ingest.js (cameras, frames),
                rollup.js (replay observations into figures), forecast.js (recompute + dashboards)
   routes/      auth.js, projects.js (user routes), ingest.js (camera route)
   db/          pool.js, migrate.js, seed.js
@@ -49,7 +49,9 @@ services/inference/
   yolo_scene.py    pretrained zero-shot     evaluate.py   measure a backend on labelled images
   demo_frames.py   synthetic frames         plugins/      drop-in trained models (+ _template.py)
   heuristics.py severity.py detector.py     the original POC code
-db/migrations/   001_init.sql (core schema), 002_reference_data.sql, 003_automation.sql (cameras, observations, price book)
+db/migrations/   001_init.sql (core schema), 002_reference_data.sql, 003_automation.sql (cameras, observations, price book),
+                 004_crack_defect_type.sql (allows the crack defect type from the trained crack model),
+                 005_accounts_notifications.sql (notifications, audit actor label, user-deletion-safe foreign keys)
 scripts/         dev.mjs, dev-db.mjs, camera-sim.mjs, export-training-set.mjs, gen-erd.mjs, run-tests.mjs
 docs/            all documentation
 ```

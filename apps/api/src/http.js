@@ -81,10 +81,15 @@ export const projectAccess = ({ write = false } = {}) => wrap(async (req, _res, 
   next();
 });
 
+/**
+ * Append to the audit trail. The actor is recorded both as a user id (cleared if the account is later
+ * deleted) and as text, so the trail still says who did it. `req.actor` overrides the label (cameras).
+ */
 export async function audit(db, req, action, entity, entityId, details = {}) {
+  const label = req.actor ?? (req.user ? `${req.user.full_name} (${req.user.role})` : null);
   await db.query(
-    'INSERT INTO audit_log (project_id, user_id, action, entity, entity_id, details) VALUES ($1,$2,$3,$4,$5,$6)',
-    [req.project?.id ?? null, req.user?.id ?? null, action, entity, entityId ?? null, details]);
+    'INSERT INTO audit_log (project_id, user_id, actor_label, action, entity, entity_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+    [req.project?.id ?? null, req.user?.id ?? null, label, action, entity, entityId ?? null, details]);
 }
 
 export function errorHandler(err, _req, res, _next) {

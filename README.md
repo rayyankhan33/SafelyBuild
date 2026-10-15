@@ -4,7 +4,7 @@ Construction progress, cost and safety monitoring for investors and site enginee
 
 An engineer enters only the initial design/budget (bill of quantities), the crews on site and the equipment available. Everything else is measured automatically: how far each part of the building has got, how much material was used (and so how much money was spent), and which defects and hazards exist. The system forecasts final cost and finish date with earned-value maths and shows investors a plain-language dashboard, while giving engineers the technical detail: standards, scores, hazard categories, suggested measures and warnings.
 
-**Status: Sprint 1 (FYP-1 mid evaluation).** The platform and the automated pipeline work end to end and are tested (253 automated tests). **Read the limits first:** the demo project uses *synthetic* camera frames; the image methods are validated only on those; accuracy on real site footage is not yet measured; a trained model from the team is expected to plug in (see [docs/model-integration.md](docs/model-integration.md)). Details in [docs/srs.md](docs/srs.md) section 5.
+**Status: Sprint 1 (FYP-1 mid evaluation).** The platform and the automated pipeline work end to end and are tested (261 automated tests). **Read the limits first:** the demo project uses *synthetic* camera frames; the image methods are validated only on those; accuracy on real site footage is not yet measured; a trained model from the team is expected to plug in (see [docs/model-integration.md](docs/model-integration.md)). Details in [docs/srs.md](docs/srs.md) section 5.
 
 | | |
 |---|---|
@@ -21,7 +21,7 @@ See [docs/implementation.md](docs/implementation.md) for details.
 npm install
 cd services/inference && python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt && cd ../..
 npm run dev             # starts everything -> http://localhost:5173  (Ctrl+C stops it)
-npm run test:all        # 253 tests (database must be running), writes docs/test-results.md
+npm run test:all        # 261 tests (database must be running), writes docs/test-results.md
 ```
 
 `npm run dev` starts PostgreSQL, the image-analysis service, the API and the web app in order, builds the demo project on first run (about a minute), and prefixes every log line with the service name. Each part can also be run alone (see implementation.md).
@@ -40,6 +40,7 @@ cd services/inference
 
 | Document | Purpose |
 |---|---|
+| [docs/proposal-revised.md](docs/proposal-revised.md) | Revised proposal: problem, scope, modules, timeline after the pivot and the new financial and schedule modules (open decisions marked) |
 | [docs/srs.md](docs/srs.md) | Scope, success criteria, numbered requirements with acceptance checks, known limitations |
 | [docs/design.md](docs/design.md) | Architecture, interfaces, sequence and state diagrams, algorithms, the evidence and tamper model |
 | [docs/model-integration.md](docs/model-integration.md) | **For the model-training teammate**: contract, plug-in steps, evaluation, training-data export |

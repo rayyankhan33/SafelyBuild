@@ -78,9 +78,10 @@ flowchart LR
 |---|---|---|
 | `POST /ingest/frame` | **camera key** (`x-camera-key`) | multipart `image`, `captured_at`; the only way frames enter |
 | `POST /auth/login`, `GET /auth/me` | public / any | sign-in |
-| `POST/GET /users` | admin | users |
-| `GET/POST /projects`, `GET /projects/:pid` | member / engineer, admin | projects |
-| `POST/GET /projects/:pid/members` | admin / staff | membership |
+| `POST/GET /users`, `DELETE /users/:id` | admin | manage accounts; delete is refused on yourself and across organisations |
+| `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all` | any (own only) | in-app notifications |
+| `GET/POST /projects`, `GET /projects/:pid` | member / **engineer only** | projects (admins are notified of new ones, they do not create them) |
+| `POST/GET/DELETE /projects/:pid/members[/:uid]` | admin / staff / admin | who can see the project |
 | `GET /price-book`, `PUT /price-book` | any / **admin** | material prices (PKR) |
 | `GET/POST/DELETE /projects/:pid/elements` | engineer, admin | BOQ (initial budget input) |
 | `POST /projects/:pid/estimates`, `GET .../estimates/active` | engineer, admin | estimate and budget |
@@ -123,7 +124,8 @@ The full schema is in [erd.md](erd.md) (generated). Groups:
 | **Raw observations** | `inference_runs` (with `model_version`, `model_info`, raw `result` JSONB), `stage_observations`, `inventory_observations`, `defects` | Append-only evidence from analyses. |
 | **Derived (rebuilt from observations)** | `task_progress`, `inventory_daily`, `material_usage`, `hazards`, `risk_scores`, `forecasts`, `alerts` | `task_progress.source` is `image_stage`; `material_usage.source` is `image_estimate`; hazards must be `auto_defect`. |
 | Engineer inputs | `daily_logs` (`crews`, `equipment`), BOQ tables | The `daily_logs` row exists for every day with frames; crews/equipment are the only fields a person fills. |
-| Audit | `audit_log` | Append-only; camera ingests record `user_id = NULL`. |
+| Audit | `audit_log` (`actor_label`) | Append-only; the actor is stored as a user id (cleared if the account is deleted) and as text, so the trail keeps the name. Camera ingests record `user_id = NULL` and a `camera: <name>` label. |
+| Notifications | `notifications` | One row per recipient; created in the same transaction as the event (project creation notifies every active admin of the organisation). |
 
 **Storage of the different data types**
 

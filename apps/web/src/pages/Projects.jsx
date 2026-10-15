@@ -51,7 +51,7 @@ export default function Projects() {
           );
         })}
       </div>
-      {role !== 'investor' && (
+      {role === 'engineer' && (
         <form className="card" style={{ marginTop: 24 }} onSubmit={create}>
           <h2>Start a new project</h2>
           <div className="row">

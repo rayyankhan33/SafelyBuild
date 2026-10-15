@@ -21,6 +21,6 @@ router.post('/ingest/frame', upload.single('image'), wrap(async (req, res) => {
   const project = (await pool.query('SELECT * FROM projects WHERE id = $1', [camera.project_id])).rows[0];
   await rebuild(pool, project);
   await recompute(pool, project);
-  await audit(pool, { project, user: null }, 'ingest', 'frame', result.media_id, { camera: camera.name });
+  await audit(pool, { project, user: null, actor: `camera: ${camera.name}` }, 'ingest', 'frame', result.media_id, { camera: camera.name });
   res.status(201).json(result);
 }));

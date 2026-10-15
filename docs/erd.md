@@ -26,6 +26,7 @@ erDiagram
     text entity_id
     jsonb details
     timestamp_with_time_zone created_at
+    text actor_label
   }
   cameras {
     uuid id PK
@@ -221,6 +222,17 @@ erDiagram
     uuid camera_id FK
     timestamp_with_time_zone received_at
   }
+  notifications {
+    uuid id PK
+    uuid org_id FK
+    uuid user_id FK
+    text kind
+    text title
+    text body
+    uuid project_id FK
+    timestamp_with_time_zone created_at
+    timestamp_with_time_zone read_at
+  }
   organizations {
     uuid id PK
     text name
@@ -360,6 +372,9 @@ erDiagram
   daily_logs |o--o{ media : "daily_log_id"
   projects ||--o{ media : "project_id"
   users |o--o{ media : "uploaded_by"
+  organizations ||--o{ notifications : "org_id"
+  projects |o--o{ notifications : "project_id"
+  users ||--o{ notifications : "user_id"
   material_catalog ||--o{ price_book : "material_id"
   users |o--o{ price_book : "updated_by"
   projects ||--o{ project_members : "project_id"

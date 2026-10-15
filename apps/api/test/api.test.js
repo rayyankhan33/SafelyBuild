@@ -510,6 +510,120 @@ describe('role views and access control (TC-API-RBAC)', () => {
   });
 });
 
+describe('accounts, notifications and project creation (TC-API-ACCT)', () => {
+  const mkUser = async (email, role) => {
+    const r = await api('POST', '/api/users', { token: tokens.admin, body: { email, full_name: `User ${email.split('@')[0]}`, role, password: 'Another-Pass-1' } });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return { id: r.body.user.id, token: (await login(email, 'Another-Pass-1')).body.token };
+  };
+  const notes = (token) => api('GET', '/api/notifications', { token }).then((r) => r.body);
+  const create = (token, name = 'Acct Test Project') => api('POST', '/api/projects', { token, body: { name, location: 'Lahore', start_date: addDays(today(), -2) } });
+
+  test('only engineers create projects: admin and investor are refused', async () => {
+    assert.equal((await create(tokens.admin)).status, 403);
+    assert.equal((await create(tokens.inv)).status, 403);
+    assert.equal((await create(tokens.eng)).status, 201);
+  });
+  test('creating a project notifies every admin of the organisation, and nobody else', async () => {
+    const admin2 = await mkUser('admin2@a.test', 'admin');
+    const before = { a1: (await notes(tokens.admin)).unread, a2: (await notes(admin2.token)).unread };
+    const r = await create(tokens.eng, 'Notify Me Tower');
+    assert.equal(r.status, 201);
+    for (const [who, tok, was] of [['admin', tokens.admin, before.a1], ['admin2', admin2.token, before.a2]]) {
+      const n = await notes(tok);
+      assert.equal(n.unread, was + 1, who);
+      assert.equal(n.notifications[0].kind, 'project_created');
+      assert.equal(n.notifications[0].project_id, r.body.project.id);
+      assert.match(n.notifications[0].body, /Notify Me Tower/);
+      assert.match(n.notifications[0].body, /eng@a\.test \(engineer\)|User eng|eng@a.test/); // names the creator
+    }
+    const engSees = (await notes(tokens.eng)).notifications.filter((x) => x.kind === 'project_created');
+    assert.equal(engSees.length, 0, 'the creator is not notified');
+    assert.equal((await notes(tokens.inv)).notifications.length, 0);
+    assert.equal((await notes(tokens.engB)).notifications.length, 0, 'another organisation sees nothing');
+  });
+  test('a refused project creation sends no notification', async () => {
+    const n = (await notes(tokens.admin)).notifications.length;
+    await create(tokens.admin, 'Should not exist');
+    assert.equal((await notes(tokens.admin)).notifications.length, n);
+  });
+  test('notifications can be marked read one by one or all at once, and only by their owner', async () => {
+    const list = (await notes(tokens.admin)).notifications;
+    const one = list.find((x) => !x.read_at);
+    assert.equal((await api('POST', `/api/notifications/${one.id}/read`, { token: tokens.eng })).status, 404); // someone else's
+    assert.equal((await api('POST', `/api/notifications/${one.id}/read`, { token: tokens.admin })).status, 200);
+    assert.equal((await api('POST', `/api/notifications/${one.id}/read`, { token: tokens.admin })).status, 200); // idempotent
+    assert.equal((await api('POST', '/api/notifications/not-a-uuid/read', { token: tokens.admin })).status, 404);
+    assert.equal((await api('POST', `/api/notifications/${crypto.randomUUID()}/read`, { token: tokens.admin })).status, 404);
+    await api('POST', '/api/notifications/read-all', { token: tokens.admin });
+    assert.equal((await notes(tokens.admin)).unread, 0);
+    assert.equal((await api('GET', '/api/notifications')).status, 401);
+  });
+
+  test('only admins can delete accounts; not their own; not other organisations\'', async () => {
+    const victim = await mkUser('victim@a.test', 'investor');
+    assert.equal((await api('DELETE', `/api/users/${victim.id}`, { token: tokens.eng })).status, 403);
+    assert.equal((await api('DELETE', `/api/users/${victim.id}`, { token: tokens.inv })).status, 403);
+    const meAdmin = (await api('GET', '/api/auth/me', { token: tokens.admin })).body.user.id;
+    const self = await api('DELETE', `/api/users/${meAdmin}`, { token: tokens.admin });
+    assert.equal(self.status, 409); assert.equal(self.body.error.code, 'cannot_delete_self');
+    const engB = (await pool.query("SELECT id FROM users WHERE email = 'eng@b.test'")).rows[0].id;
+    assert.equal((await api('DELETE', `/api/users/${engB}`, { token: tokens.admin })).status, 404);
+    assert.equal((await pool.query('SELECT 1 FROM users WHERE id = $1', [engB])).rowCount, 1);
+    assert.equal((await api('DELETE', `/api/users/${crypto.randomUUID()}`, { token: tokens.admin })).status, 404);
+    assert.equal((await api('DELETE', '/api/users/not-a-uuid', { token: tokens.admin })).status, 404);
+    assert.equal((await api('DELETE', `/api/users/${victim.id}`)).status, 401);
+  });
+  test('a deleted account stops working at once; what it created is kept; the audit trail still names it', async () => {
+    const eng = await mkUser('temp.eng@a.test', 'engineer');
+    const made = await create(eng.token, 'Orphan Keeper');
+    assert.equal(made.status, 201);
+    const pid = made.body.project.id;
+    await api('POST', `/api/projects/${pid}/elements`, { token: eng.token, body: { label: 'S', element_type: 'slab', length_m: 5, width_m: 5, thickness_m: 0.15, concrete_fc_mpa: 25 } });
+    await api('POST', `/api/projects/${pid}/estimates`, { token: eng.token, body: {} });
+
+    const del = await api('DELETE', `/api/users/${eng.id}`, { token: tokens.admin });
+    assert.equal(del.status, 200);
+    assert.equal(del.body.deleted.email, 'temp.eng@a.test');
+    assert.ok(!('password_hash' in del.body.deleted));
+
+    // the old token and the password both stop working immediately
+    assert.equal((await api('GET', '/api/projects', { token: eng.token })).status, 401);
+    assert.equal((await login('temp.eng@a.test', 'Another-Pass-1')).status, 401);
+    // the project and its estimate survive, no longer attributed to a user
+    const p = (await pool.query('SELECT created_by FROM projects WHERE id = $1', [pid])).rows[0];
+    assert.equal(p.created_by, null);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM cost_estimates WHERE project_id = $1 AND created_by IS NULL', [pid])).rows[0].n, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM project_members WHERE user_id = $1', [eng.id])).rows[0].n, 0);
+    // the trail keeps the name as text
+    const a = await api('GET', `/api/projects/${pid}/audit`, { token: tokens.admin });
+    const created = a.body.audit.find((x) => x.action === 'create' && x.entity === 'project');
+    assert.match(created.full_name, /User temp\.eng \(engineer\)/);
+    const rec = (await pool.query("SELECT details, actor_label FROM audit_log WHERE action = 'delete' AND entity = 'user' AND entity_id = $1", [eng.id])).rows[0];
+    assert.equal(rec.details.email, 'temp.eng@a.test');
+    assert.match(rec.actor_label, /admin@a\.test \(admin\)/);
+  });
+  test('deleting a user who received notifications or acknowledged alerts does not fail', async () => {
+    const admin3 = await mkUser('admin3@a.test', 'admin');
+    await create(tokens.eng, 'For admin3');
+    assert.ok((await notes(admin3.token)).unread >= 1);
+    assert.equal((await api('DELETE', `/api/users/${admin3.id}`, { token: tokens.admin })).status, 200);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM notifications WHERE user_id = $1', [admin3.id])).rows[0].n, 0);
+  });
+  test('admins manage project access; removed people lose the project at once', async () => {
+    const inv = await mkUser('access.inv@a.test', 'investor');
+    const p = (await create(tokens.eng, 'Access Project')).body.project;
+    assert.equal((await api('GET', `/api/projects/${p.id}`, { token: inv.token })).status, 404); // not added yet
+    assert.equal((await api('POST', `/api/projects/${p.id}/members`, { token: tokens.eng, body: { user_id: inv.id } })).status, 403);
+    assert.equal((await api('POST', `/api/projects/${p.id}/members`, { token: tokens.admin, body: { user_id: inv.id } })).status, 201);
+    assert.equal((await api('GET', `/api/projects/${p.id}`, { token: inv.token })).status, 200);
+    assert.equal((await api('DELETE', `/api/projects/${p.id}/members/${inv.id}`, { token: tokens.eng })).status, 403);
+    assert.equal((await api('DELETE', `/api/projects/${p.id}/members/${inv.id}`, { token: tokens.admin })).status, 200);
+    assert.equal((await api('GET', `/api/projects/${p.id}`, { token: inv.token })).status, 404);
+    assert.equal((await api('DELETE', `/api/projects/${p.id}/members/${inv.id}`, { token: tokens.admin })).status, 404); // already removed
+  });
+});
+
 describe('audit trail (TC-API-AUDIT)', () => {
   test('mutations and ingests are recorded; investors cannot read the log', async () => {
     const r = await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.eng });

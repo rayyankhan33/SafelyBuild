@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { pool } from '../db/pool.js';
+import { pool, withTx } from '../db/pool.js';
 import {
-  HttpError, audit, checkPassword, hashPassword, makeLoginLimiter, parse, requireAuth, requireRole, signToken, wrap,
+  HttpError, audit, checkPassword, hashPassword, makeLoginLimiter, notFound, parse, requireAuth, requireRole, signToken, uuid, wrap,
 } from '../http.js';
 
 export const router = Router();
@@ -45,6 +45,24 @@ router.post('/users', requireAuth, requireRole('admin'), wrap(async (req, res) =
 router.get('/users', requireAuth, requireRole('admin'), wrap(async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM users WHERE org_id = $1 ORDER BY full_name', [req.user.org_id]);
   res.json({ users: rows.map(publicUser) });
+}));
+
+/**
+ * Admin deletes an account in their own organisation. Not allowed on yourself (an admin cannot lock
+ * the organisation out). Projects, estimates and frames the user created are kept; the audit trail keeps
+ * their name as text. Their sessions stop working immediately (the user row is re-read on every request).
+ */
+router.delete('/users/:id', requireAuth, requireRole('admin'), wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!uuid.safeParse(id).success) throw notFound('user');
+  const u = (await pool.query('SELECT * FROM users WHERE id = $1 AND org_id = $2', [id, req.user.org_id])).rows[0];
+  if (!u) throw notFound('user');
+  if (u.id === req.user.id) throw new HttpError(409, 'cannot_delete_self', 'you cannot delete your own account');
+  await withTx(pool, async (c) => {
+    await audit(c, req, 'delete', 'user', u.id, { email: u.email, full_name: u.full_name, role: u.role });
+    await c.query('DELETE FROM users WHERE id = $1', [u.id]);
+  });
+  res.json({ ok: true, deleted: publicUser(u) });
 }));
 
 export const publicUser = (u) => ({ id: u.id, email: u.email, full_name: u.full_name, role: u.role, pec_number: u.pec_number ?? null, org_id: u.org_id });

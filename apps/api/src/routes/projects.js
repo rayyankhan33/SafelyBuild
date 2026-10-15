@@ -9,6 +9,7 @@ import { validateElement } from '../domain/estimation.js';
 import * as storage from '../storage.js';
 import { buildDashboard, recompute } from '../services/forecast.js';
 import { createCamera, listCameras, setCameraActive } from '../services/ingest.js';
+import { listNotifications, markAllRead, markRead } from '../services/notifications.js';
 import {
   createEstimate, createProject, generateProjectSchedule, getActiveEstimate, getSchedule, listSiteStatus, loadRates, setPriceBook, setSiteStatus,
 } from '../services/projects.js';
@@ -18,11 +19,12 @@ router.use(requireAuth);
 
 // What each role may do (see docs/design.md section 10):
 //   investor  read-only
-//   engineer  BOQ and budget, crews and equipment. Nothing that describes site conditions.
-//   admin     the above, plus users, cameras and the price book
+//   engineer  creates projects; BOQ and budget, crews and equipment. Nothing that describes site conditions.
+//   admin     does NOT create projects (is notified when one is created); manages users (incl. deleting accounts),
+//             project access, cameras and the price book
 const read = projectAccess();
 const staff = projectAccess({ write: true });
-const engineerOrAdmin = requireRole('admin', 'engineer');
+const engineerOnly = requireRole('engineer');
 const adminOnly = requireRole('admin');
 
 // ------------------------------------------------------------------ projects
@@ -37,7 +39,7 @@ router.get('/projects', wrap(async (req, res) => {
 const newProject = z.object({
   name: z.string().min(2).max(160), location: z.string().max(200).optional(), description: z.string().max(2000).optional(), start_date: isoDate,
 });
-router.post('/projects', engineerOrAdmin, wrap(async (req, res) => {
+router.post('/projects', engineerOnly, wrap(async (req, res) => {
   const p = await createProject(pool, req.user, parse(newProject, req.body));
   await audit(pool, { ...req, project: p }, 'create', 'project', p.id);
   res.status(201).json({ project: p });
@@ -54,11 +56,31 @@ router.post('/projects/:pid/members', adminOnly, read, wrap(async (req, res) => 
   res.status(201).json({ ok: true });
 }));
 
+router.delete('/projects/:pid/members/:uid', adminOnly, read, wrap(async (req, res) => {
+  if (!uuid.safeParse(req.params.uid).success) throw notFound('member');
+  const r = await pool.query('DELETE FROM project_members WHERE project_id = $1 AND user_id = $2', [req.project.id, req.params.uid]);
+  if (!r.rowCount) throw notFound('member');
+  await audit(pool, req, 'remove_member', 'project', req.project.id, { user_id: req.params.uid });
+  res.json({ ok: true });
+}));
+
 router.get('/projects/:pid/members', staff, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.full_name, u.email, u.role, u.pec_number FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = $1 ORDER BY u.role, u.full_name`,
     [req.project.id]);
   res.json({ members: rows });
+}));
+
+// ------------------------------------------------------------------ notifications (each user sees only their own)
+router.get('/notifications', wrap(async (req, res) => {
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
+  res.json(await listNotifications(pool, req.user.id, { limit }));
+}));
+router.post('/notifications/read-all', wrap(async (req, res) => res.json({ marked: await markAllRead(pool, req.user.id) })));
+router.post('/notifications/:id/read', wrap(async (req, res) => {
+  if (!uuid.safeParse(req.params.id).success) throw notFound('notification');
+  await markRead(pool, req.user.id, req.params.id);
+  res.json({ ok: true });
 }));
 
 // ------------------------------------------------------------------ price book (admin only)
@@ -192,7 +214,7 @@ router.post('/projects/:pid/alerts/:aid/ack', staff, wrap(async (req, res) => {
 }));
 router.get('/projects/:pid/audit', staff, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT a.id, a.action, a.entity, a.entity_id, a.details, a.created_at, u.full_name FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+    `SELECT a.id, a.action, a.entity, a.entity_id, a.details, a.created_at, COALESCE(u.full_name, a.actor_label) AS full_name FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
      WHERE a.project_id = $1 ORDER BY a.id DESC LIMIT 200`, [req.project.id]);
   res.json({ audit: rows });
 }));
