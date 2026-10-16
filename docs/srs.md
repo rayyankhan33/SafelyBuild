@@ -25,7 +25,7 @@ Version 0.2 (Sprint 1, revised for the automated-evidence design). Every require
 | Evidence ingest | Camera registration, per-camera secret, clock check, replay protection, failure tolerance, model-version stamping | Camera hardware drivers, video streams |
 | Progress (schedule tracking) | Zone cameras report the visible construction stage; progress from agreeing frames; pour coverage; baseline schedule; SPI forecast, finish date, days early/late | Critical path with parallel tasks |
 | Spend (financial tracking) | Yard cameras estimate stock; start-vs-end-of-day gives consumption; priced from the price book; EVM forecast, overrun | Labour and equipment cost |
-| Defects | Rusted rebar / honeycomb via OpenCV heuristics, per-camera setting. **Cracks via a trained model** (`crack_cnn` / `tiles_and_cracks` plugins, opt-in; [crack-model.md](crack-model.md)) | Trained rust/honeycomb model (teammate in progress), crack width, crack accuracy on real CCTV footage |
+| Defects | Rusted rebar / honeycomb via OpenCV heuristics, per-camera setting. **Cracks via a trained model** (`crack_cnn` plugin, opt-in; [crack-model.md](crack-model.md)) | Trained rust/honeycomb model (teammate in progress), crack width, crack accuracy on real CCTV footage |
 | Risk and hazards | SDI 0-10, risk matrix, ALARP, bow-tie, hazards derived automatically and closed automatically | Detection of PPE, falls, excavation hazards |
 | Evidence health | Overdue cameras and uncovered tasks flagged; safety marked "not verified" | Camera tamper detection (e.g. lens covered) |
 | Model plug-in | Backend registry, drop-in plugin, evaluation harness, training-set export | The trained model itself |

@@ -135,10 +135,10 @@ def test_persistent_detection_is_reported_once():
 
 
 # --------------------------------------------------------------------- registry / service integration
-def test_crack_plugins_are_registered_but_not_active_by_default():
+def test_crack_plugin_is_registered_but_not_active_by_default():
     info = client.get("/v1/backends").json()
     names = {b["name"] for b in info["backends"]}
-    assert {"crack_cnn", "tiles_and_cracks"} <= names
+    assert "crack_cnn" in names and "tiles_and_cracks" not in names
     assert info["active"]["defects"] == "opencv_tiles"  # a plugin is never activated silently
 
 
@@ -157,18 +157,6 @@ def test_crack_backend_returns_stamped_crack_findings(monkeypatch):
     x1, y1, x2, y2 = f["bbox"]
     assert x1 < x2 and y1 < y2
     assert 0 < body["coverage"] <= 1
-
-
-def test_tiles_and_cracks_adds_cracks_to_the_heuristic_findings(monkeypatch):
-    monkeypatch.setattr(crack_model, "get_model", lambda: StubModel())
-    monkeypatch.setattr(crack_model, "is_available", lambda: True)
-    r = client.post("/v1/defects?backend=tiles_and_cracks", files={"image": ("a.png", png(wall_with_crack()), "image/png")})
-    assert r.status_code == 200, r.text
-    findings = r.json()["findings"]
-    assert any(f["defect_type"] == "concrete_crack" for f in findings)
-    scores = [f["score"] for f in findings]
-    assert scores == sorted(scores, reverse=True)
-    assert all(f["defect_type"] in ("concrete_crack", "rusted_rebar", "honeycombed_concrete") for f in findings)
 
 
 def test_crack_backend_without_model_file_is_501(monkeypatch, tmp_path):
