@@ -305,6 +305,16 @@ Known gaps: no HTTPS termination (deployment), in-memory login limiter (single p
 | Time tampering | Camera clock must agree with the server; each frame stores capture and receive times |
 | Duplicates and replays | Unique `(camera, SHA-256)` |
 | Model changes | Every analysis stores model name and version; results can be re-run |
+| Who may change what | The three roles do not overlap (table below); the API enforces it, the UI only mirrors it |
 | What engineers still enter | BOQ/budget, crews, equipment: visible in the audit log and clearly labelled as inputs |
+
+**Roles (enforced by the API, tested in TC-API-ROLES).**
+
+| | Engineer (lead engineer) | Administrator | Investor |
+|---|---|---|---|
+| Pages | Overview, Design & estimate, Schedule, Crews & equipment, Evidence, Risk & safety, Test footage | Summary, Cameras, Price book, Access, Audit log | Summary, Budget, Progress & schedule, Safety, Site photos |
+| May write | Create project, BOQ, estimate, schedule, crews and equipment, acknowledge warnings, test footage | Install/disable cameras, price book, accounts (create, delete), project access | Nothing |
+| May read | Technical status, risk and hazard detail, evidence health, price book (read-only) | Everything about system health; BOQ and schedule read-only; audit log | Plain-language figures only (no ratings, codes or controls) |
+| Refused | Cameras, prices, people, audit log | BOQ, estimate, schedule, crews, warnings, test footage, creating projects | Every write; price book, cameras, BOQ |
 
 **Open risk.** A camera can still be physically obstructed or pointed away. Not detected yet; planned as a frame-change and scene-consistency check.

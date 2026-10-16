@@ -146,6 +146,19 @@ export async function buildDashboard(db, project, role, asOf = today()) {
     alerts: alertsRows.map((a) => pickAlert(a, 'investor')),
     recent_media: recent,
   };
+  // Investor-only pages: open safety issues in plain words and where the money went. No ratings, codes or controls.
+  const PLAIN = { intolerable: 'Serious: work in this area should stop until it is cleared.', alarp: 'Needs attention: the site team should act on it.', acceptable: 'Minor: being monitored.' };
+  const hz = r.state.hazards.map((h) => ({ h, zone: alarpZone(h.risk_rating ?? riskRating(h.likelihood, h.severity)) }));
+  investor.safety_items = {
+    open: hz.filter(({ h }) => h.status !== 'closed').sort((x, y) => (y.h.risk_rating ?? 0) - (x.h.risk_rating ?? 0))
+      .map(({ h, zone }) => ({ id: h.id, title: h.title, level: zone === 'intolerable' ? 'serious' : zone === 'alarp' ? 'attention' : 'minor', plain: PLAIN[zone], raised_on: h.identified_on })),
+    closed_count: hz.filter(({ h }) => h.status === 'closed').length,
+    clean_days_to_close: CLEAN_DAYS_TO_CLOSE,
+  };
+  investor.spend_by_material = (await db.query(
+    `SELECT c.name AS material, round(sum(u.cost_pkr))::float8 AS cost_pkr FROM material_usage u
+     JOIN daily_logs l ON l.id = u.daily_log_id JOIN material_catalog c ON c.id = u.material_id
+     WHERE l.project_id = $1 GROUP BY c.name ORDER BY sum(u.cost_pkr) DESC`, [project.id])).rows;
   if (role === 'investor') return investor;
 
   const est = await getActiveEstimate(db, project.id);
@@ -172,9 +185,10 @@ export async function buildDashboard(db, project, role, asOf = today()) {
             (SELECT count(*) FROM defects d WHERE d.media_id = m.id AND d.is_violation)::int AS violations
      FROM media m JOIN daily_logs l ON l.id = m.daily_log_id JOIN cameras c ON c.id = m.camera_id
      WHERE m.project_id = $1 ORDER BY m.captured_at DESC LIMIT 24`, [project.id])).rows;
+  const { safety_items: _s, spend_by_material: _m, ...shared } = investor;
   return {
-    ...investor,
-    view: 'engineer',
+    ...shared,
+    view: role === 'admin' ? 'admin' : 'engineer',
     headline: { ...investor.headline,
       budget: { ...investor.headline.budget, technical: b.technical, cpi: m.budget.cpi ?? null, eac_trend: m.budget.eac_trend ?? null, method: m.budget.method ?? null },
       schedule: { ...investor.headline.schedule, technical: s.technical, spi: m.schedule.spi ?? null },

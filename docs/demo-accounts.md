@@ -9,6 +9,8 @@ Never use these on a shared or public deployment: the password is in the source 
 | Site engineer (BOQ/budget, crews, equipment; technical view) | `engineer@demo.safelybuild.test` | `SafelyBuild-Demo-1` | Ayesha Malik |
 | Administrator (manages accounts and project access, installs cameras, edits the price book; **cannot create projects**) | `admin@demo.safelybuild.test` | `SafelyBuild-Demo-1` | Demo Admin |
 
+**What each account sees.** Investor: Summary, Budget, Progress & schedule, Safety, Site photos. Engineer: Overview, Design & estimate, Schedule, Crews & equipment, Evidence, Risk & safety, Test footage. Administrator: Summary, Cameras, Price book, Access, Audit log. The roles do not overlap: each is refused the others' actions.
+
 The demo project "Margalla Heights - Residential Block A" is flagged **demo**: its camera frames are synthetic drawings (a "Demo project" banner appears in both views). Both the investor and the engineer are members of it.
 
 ## What to check in each UI

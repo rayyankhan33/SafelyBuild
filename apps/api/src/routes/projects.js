@@ -23,14 +23,16 @@ import {
 export const router = Router();
 router.use(requireAuth);
 
-// What each role may do (see docs/design.md section 10):
-//   investor  read-only
-//   engineer  creates projects; BOQ and budget, crews and equipment. Nothing that describes site conditions.
-//   admin     does NOT create projects (is notified when one is created); manages users (incl. deleting accounts),
-//             project access, cameras and the price book
+// What each role may do (see docs/design.md section 10). The roles do not overlap:
+//   investor  read-only: plain-language progress, money, schedule, safety and photos
+//   engineer  creates projects; BOQ and budget, schedule, crews and equipment; reads technical status, risk and
+//             evidence health; the temporary test-footage tool. Cannot install cameras, edit prices or manage people.
+//   admin     does NOT create projects (is notified when one is created) and cannot enter project content;
+//             manages users (incl. deleting accounts), project access, cameras, the price book and reads the audit log
 const read = projectAccess();
 const staff = projectAccess({ write: true });
 const engineerOnly = requireRole('engineer');
+const eng = [engineerOnly, read];            // engineer writes: role first, then project membership
 const adminOnly = requireRole('admin');
 
 // ------------------------------------------------------------------ projects
@@ -70,7 +72,7 @@ router.delete('/projects/:pid/members/:uid', adminOnly, read, wrap(async (req, r
   res.json({ ok: true });
 }));
 
-router.get('/projects/:pid/members', staff, wrap(async (req, res) => {
+router.get('/projects/:pid/members', adminOnly, read, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.full_name, u.email, u.role, u.pec_number FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = $1 ORDER BY u.role, u.full_name`,
     [req.project.id]);
@@ -90,7 +92,7 @@ router.post('/notifications/:id/read', wrap(async (req, res) => {
 }));
 
 // ------------------------------------------------------------------ price book (admin only)
-router.get('/price-book', wrap(async (_req, res) => res.json({ rates: await loadRates(pool), currency: 'PKR' })));
+router.get('/price-book', requireRole('engineer', 'admin'), wrap(async (_req, res) => res.json({ rates: await loadRates(pool), currency: 'PKR' })));
 router.put('/price-book', adminOnly, wrap(async (req, res) => {
   const rates = parse(z.record(z.enum(['CEMENT', 'SAND', 'AGGREGATE', 'REBAR', 'BRICK']), z.number().min(0).max(10_000_000)), req.body);
   await setPriceBook(pool, req.user.id, rates);
@@ -112,7 +114,7 @@ router.get('/projects/:pid/elements', staff, wrap(async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM design_elements WHERE project_id = $1 ORDER BY created_at, label', [req.project.id]);
   res.json({ elements: rows });
 }));
-router.post('/projects/:pid/elements', staff, wrap(async (req, res) => {
+router.post('/projects/:pid/elements', eng, wrap(async (req, res) => {
   const items = parse(z.array(elementSchema).min(1).max(500), Array.isArray(req.body) ? req.body : [req.body]);
   const problems = items.flatMap((e) => validateElement(e));
   if (problems.length) throw bad('some elements are incomplete', problems);
@@ -127,7 +129,7 @@ router.post('/projects/:pid/elements', staff, wrap(async (req, res) => {
   await audit(pool, req, 'create', 'design_elements', null, { count: out.length });
   res.status(201).json({ elements: out });
 }));
-router.delete('/projects/:pid/elements/:eid', staff, wrap(async (req, res) => {
+router.delete('/projects/:pid/elements/:eid', eng, wrap(async (req, res) => {
   if (!uuid.safeParse(req.params.eid).success) throw notFound('element');
   const r = await pool.query('DELETE FROM design_elements WHERE id = $1 AND project_id = $2', [req.params.eid, req.project.id]);
   if (!r.rowCount) throw notFound('element');
@@ -136,7 +138,7 @@ router.delete('/projects/:pid/elements/:eid', staff, wrap(async (req, res) => {
 }));
 
 // ------------------------------------------------------------------ estimate (initial budget): engineer input
-router.post('/projects/:pid/estimates', staff, wrap(async (req, res) => {
+router.post('/projects/:pid/estimates', eng, wrap(async (req, res) => {
   const b = parse(z.object({ contingency_pct: z.number().min(0).max(50).default(5), activate: z.boolean().default(true) }), req.body ?? {});
   const est = await createEstimate(pool, req.project, req.user.id, b);
   await audit(pool, req, 'create', 'estimate', est.id, { total_pkr: est.total_pkr, activate: b.activate });
@@ -149,7 +151,7 @@ router.get('/projects/:pid/estimates/active', staff, wrap(async (req, res) => {
 }));
 
 // ------------------------------------------------------------------ schedule
-router.post('/projects/:pid/schedule/generate', staff, wrap(async (req, res) => {
+router.post('/projects/:pid/schedule/generate', eng, wrap(async (req, res) => {
   const b = parse(z.object({ crews: z.number().int().min(1).max(20).optional(), confirm_reset: z.boolean().optional() }), req.body ?? {});
   const s = await generateProjectSchedule(pool, req.project, b);
   await audit(pool, req, 'generate', 'schedule', null, { tasks: s.tasks.length, planned_end: s.planned_end });
@@ -162,7 +164,7 @@ const siteStatusSchema = z.object({
   crews: z.number().int().min(0).max(500),
   equipment: z.array(z.object({ type: z.string().min(1).max(80), count: z.number().int().min(0).max(1000) })).max(50).default([]),
 }).strict();
-router.put('/projects/:pid/site-status/:date', staff, wrap(async (req, res) => {
+router.put('/projects/:pid/site-status/:date', eng, wrap(async (req, res) => {
   const date = parse(isoDate, req.params.date);
   const body = parse(siteStatusSchema, req.body ?? {});
   const row = await setSiteStatus(pool, req.project, req.user, date, body);
@@ -212,9 +214,9 @@ const uploadDir = path.join(os.tmpdir(), 'safelybuild-uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
 const footageUpload = multer({ dest: uploadDir, limits: { fileSize: config.testUploadMaxBytes, files: 1 } });
 
-router.get('/test-footage/defaults', wrap(async (_req, res) => res.json(await testfootage.getDefaults())));
-router.get('/projects/:pid/test-runs', staff, wrap(async (req, res) => res.json({ runs: await testfootage.listRuns(pool, req.project.id) })));
-router.post('/projects/:pid/test-runs', staff, footageUpload.single('file'), wrap(async (req, res) => {
+router.get('/test-footage/defaults', engineerOnly, wrap(async (_req, res) => res.json(await testfootage.getDefaults())));
+router.get('/projects/:pid/test-runs', eng, wrap(async (req, res) => res.json({ runs: await testfootage.listRuns(pool, req.project.id) })));
+router.post('/projects/:pid/test-runs', eng, footageUpload.single('file'), wrap(async (req, res) => {
   const tmp = req.file?.path;
   try {
     if (!req.file) throw bad("attach a video or image in the 'file' field");
@@ -229,17 +231,17 @@ router.post('/projects/:pid/test-runs', staff, footageUpload.single('file'), wra
     throw e;
   }
 }));
-router.get('/projects/:pid/test-runs/:rid', staff, wrap(async (req, res) => {
+router.get('/projects/:pid/test-runs/:rid', eng, wrap(async (req, res) => {
   if (!uuid.safeParse(req.params.rid).success) throw notFound('test run');
   res.json({ run: await testfootage.getRun(pool, req.project.id, req.params.rid) });
 }));
-router.delete('/projects/:pid/test-runs/:rid', staff, wrap(async (req, res) => {
+router.delete('/projects/:pid/test-runs/:rid', eng, wrap(async (req, res) => {
   if (!uuid.safeParse(req.params.rid).success) throw notFound('test run');
   const run = await testfootage.deleteRun(pool, req.project.id, req.params.rid);
   await audit(pool, req, 'delete', 'test_footage', run.id, { filename: run.filename });
   res.json({ ok: true });
 }));
-router.get('/test-frames/:id/image', wrap(async (req, res) => {
+router.get('/test-frames/:id/image', engineerOnly, wrap(async (req, res) => {
   if (!uuid.safeParse(req.params.id).success) throw notFound('frame');
   const bytes = await testfootage.frameImage(pool, req.user, req.params.id);
   res.set('Content-Type', 'image/jpeg').set('Cache-Control', 'private, max-age=3600').send(bytes);
@@ -250,14 +252,14 @@ router.get('/projects/:pid/dashboard', read, wrap(async (req, res) => {
   const asOf = req.query.as_of ? parse(isoDate, req.query.as_of) : today();
   res.json(await buildDashboard(pool, req.project, req.user.role, asOf));
 }));
-router.post('/projects/:pid/alerts/:aid/ack', staff, wrap(async (req, res) => {
+router.post('/projects/:pid/alerts/:aid/ack', eng, wrap(async (req, res) => {
   if (!uuid.safeParse(req.params.aid).success) throw notFound('alert');
   const r = await pool.query('UPDATE alerts SET acknowledged_by = $3, acknowledged_at = now() WHERE id = $1 AND project_id = $2', [req.params.aid, req.project.id, req.user.id]);
   if (!r.rowCount) throw notFound('alert');
   await audit(pool, req, 'acknowledge', 'alert', req.params.aid);
   res.json({ ok: true });
 }));
-router.get('/projects/:pid/audit', staff, wrap(async (req, res) => {
+router.get('/projects/:pid/audit', adminOnly, read, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT a.id, a.action, a.entity, a.entity_id, a.details, a.created_at, COALESCE(u.full_name, a.actor_label) AS full_name FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
      WHERE a.project_id = $1 ORDER BY a.id DESC LIMIT 200`, [req.project.id]);

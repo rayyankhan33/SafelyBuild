@@ -1,5 +1,6 @@
-import Investor from '../Investor.jsx';
-import { Badge } from '../../components.jsx';
+// Engineer's technical overview: variances, indices and the method behind them. The plain-language
+// story told to investors lives on the investor pages, not here.
+import { Badge, DailySpendChart, MoneyChart, ProductivityChart, ProgressChart } from '../../components.jsx';
 
 export default function Overview({ data }) {
   if (!data.setup_complete) {
@@ -7,6 +8,7 @@ export default function Overview({ data }) {
   }
   const h = data.headline;
   const m = data.metrics;
+  const n = (v) => Number(v).toLocaleString('en-PK');
   return (
     <>
       <div className="card" style={{ marginBottom: 16 }}>
@@ -21,12 +23,16 @@ export default function Overview({ data }) {
           </table>
         </div>
         <p className="small muted" style={{ marginBottom: 0 }}>
-          BAC {m.bac.toLocaleString('en-PK')} · PV {m.pv.toLocaleString('en-PK')} · EV {m.ev.toLocaleString('en-PK')} · AC {m.ac.toLocaleString('en-PK')} (PKR) ·
-          {' '}CV {m.cost_variance.toLocaleString('en-PK')} · SV {m.schedule_variance.toLocaleString('en-PK')} · {m.log_days} daily logs.
+          BAC {n(m.bac)} · PV {n(m.pv)} · EV {n(m.ev)} · AC {n(m.ac)} (PKR) · CV {n(m.cost_variance)} · SV {n(m.schedule_variance)} · {m.log_days} daily logs.
           {' '}Method: {h.budget.method ?? 'EAC = BAC / CPI'}; schedule forecast = planned duration / SPI (ANSI/EIA-748 earned value).
         </p>
       </div>
-      <Investor data={data} compact />
+      <div className="grid cols-2">
+        <MoneyChart series={data.series} bac={h.budget.bac} />
+        <ProgressChart series={data.series} bac={h.budget.bac} />
+        <DailySpendChart series={data.series} />
+        <ProductivityChart series={data.series} />
+      </div>
     </>
   );
 }

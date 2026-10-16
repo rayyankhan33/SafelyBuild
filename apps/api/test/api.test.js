@@ -628,6 +628,49 @@ describe('accounts, notifications and project creation (TC-API-ACCT)', () => {
   });
 });
 
+describe('the three roles do not overlap (TC-API-ROLES)', () => {
+  const p = () => `/api/projects/${projectId}`;
+  test('administrators cannot enter project content: BOQ, estimate, schedule, crews, alert acknowledgement', async () => {
+    const el = { label: 'x', element_type: 'column', quantity: 1, length_m: 0.3, width_m: 0.3, height_m: 3, concrete_fc_mpa: 25 };
+    const before = (await pool.query('SELECT count(*)::int n FROM design_elements WHERE project_id = $1', [projectId])).rows[0].n;
+    assert.equal((await api('POST', `${p()}/elements`, { token: tokens.admin, body: [el] })).status, 403);
+    assert.equal((await api('DELETE', `${p()}/elements/${crypto.randomUUID()}`, { token: tokens.admin })).status, 403);
+    assert.equal((await api('POST', `${p()}/estimates`, { token: tokens.admin, body: { contingency_pct: 5, activate: true } })).status, 403);
+    assert.equal((await api('POST', `${p()}/schedule/generate`, { token: tokens.admin, body: { crews: 1 } })).status, 403);
+    assert.equal((await api('PUT', `${p()}/site-status/${today()}`, { token: tokens.admin, body: { crews: 3, equipment: [] } })).status, 403);
+    assert.equal((await api('POST', `${p()}/alerts/${crypto.randomUUID()}/ack`, { token: tokens.admin })).status, 403);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM design_elements WHERE project_id = $1', [projectId])).rows[0].n, before);
+    // they can still read what the engineer entered
+    assert.equal((await api('GET', `${p()}/elements`, { token: tokens.admin })).status, 200);
+    assert.equal((await api('GET', `${p()}/schedule`, { token: tokens.admin })).status, 200);
+  });
+  test('engineers cannot do administrator work: cameras, price book, people, audit log', async () => {
+    assert.equal((await api('POST', `${p()}/cameras`, { token: tokens.eng, body: { name: 'mine', kind: 'overview' } })).status, 403);
+    assert.equal((await api('PUT', '/api/price-book', { token: tokens.eng, body: { CEMENT: 1 } })).status, 403);
+    assert.equal((await api('GET', `${p()}/members`, { token: tokens.eng })).status, 403);
+    assert.equal((await api('POST', `${p()}/members`, { token: tokens.eng, body: { user_id: crypto.randomUUID() } })).status, 403);
+    assert.equal((await api('GET', '/api/users', { token: tokens.eng })).status, 403);
+    assert.equal((await api('GET', `${p()}/audit`, { token: tokens.eng })).status, 403);
+  });
+  test('investors cannot read the price book or any staff list, and get their own safety and spend views', async () => {
+    assert.equal((await api('GET', '/api/price-book', { token: tokens.inv })).status, 403);
+    assert.equal((await api('GET', `${p()}/cameras`, { token: tokens.inv })).status, 403);
+    assert.equal((await api('GET', `${p()}/elements`, { token: tokens.inv })).status, 403);
+    const d = await dash(tokens.inv);
+    assert.ok(Array.isArray(d.safety_items.open) && typeof d.safety_items.closed_count === 'number');
+    assert.ok(d.safety_items.open.every((h) => h.title && ['serious', 'attention', 'minor'].includes(h.level) && h.plain));
+    assert.doesNotMatch(JSON.stringify(d.safety_items), /ALARP|SDI|likelihood|rating|bow_tie|preventive/i);
+    assert.ok(Array.isArray(d.spend_by_material));
+    const e = await dash(tokens.eng);
+    assert.equal(e.safety_items, undefined); assert.equal(e.spend_by_material, undefined);
+  });
+  test('administrators and engineers each get their own dashboard payload', async () => {
+    const a = await dash(tokens.admin);
+    assert.equal(a.view, 'admin'); assert.ok(a.evidence.cameras.length > 0);
+    assert.equal((await dash(tokens.eng)).view, 'engineer');
+  });
+});
+
 describe('TEMPORARY test footage (TC-API-FOOTAGE)', () => {
   const { failStaleRuns } = footageSvc;
   const mp4 = (extra = 3000) => Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftypisom'), crypto.randomBytes(extra)]);
@@ -665,9 +708,12 @@ describe('TEMPORARY test footage (TC-API-FOOTAGE)', () => {
             (SELECT count(*) FROM task_progress) p, (SELECT count(*) FROM material_usage) u, (SELECT count(*) FROM inference_runs) r`, [projectId])).rows[0]);
   const leftovers = () => fs.readdirSync(path.join(os.tmpdir(), 'safelybuild-uploads')).length;
 
-  test('only engineers and admins of the project may use it', async () => {
+  test('only engineers of the project may use it: administrators and investors are refused', async () => {
     reset();
     assert.equal((await upload(tokens.inv)).status, 403);
+    assert.equal((await upload(tokens.admin)).status, 403);
+    assert.equal((await api('GET', `/api/projects/${projectId}/test-runs`, { token: tokens.admin })).status, 403);
+    assert.equal((await api('GET', '/api/test-footage/defaults', { token: tokens.admin })).status, 403);
     assert.equal((await upload(tokens.eng2)).status, 404);   // not a member
     assert.equal((await upload(tokens.engB)).status, 404);   // other organisation
     assert.equal((await api('POST', `/api/projects/${projectId}/test-runs`, { form: form(mp4()) })).status, 401);
@@ -719,8 +765,8 @@ describe('TEMPORARY test footage (TC-API-FOOTAGE)', () => {
     const ok = await img(tokens.eng);
     assert.equal(ok.status, 200); assert.equal(ok.headers.get('content-type'), 'image/jpeg');
     assert.equal((await ok.arrayBuffer()).byteLength > 4, true);
-    assert.equal((await img(tokens.admin)).status, 200);
-    assert.equal((await img(tokens.inv)).status, 200);            // investors are members: they may see frames of their project
+    assert.equal((await img(tokens.admin)).status, 403);          // the tool belongs to the engineer side only
+    assert.equal((await img(tokens.inv)).status, 403);
     assert.equal((await img(tokens.eng2)).status, 404);
     assert.equal((await img(tokens.engB)).status, 404);
     assert.equal((await fetch(`${base}/api/test-frames/not-a-uuid/image`, { headers: { authorization: `Bearer ${tokens.eng}` } })).status, 404);
@@ -830,19 +876,20 @@ describe('TEMPORARY test footage (TC-API-FOOTAGE)', () => {
     fake.state.mode = 'down';
     assert.equal((await api('GET', '/api/test-footage/defaults', { token: tokens.eng })).status, 503);
     reset();
-    const actions = (await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.eng })).body.audit.map((a) => `${a.action}:${a.entity}`);
+    const actions = (await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.admin })).body.audit.map((a) => `${a.action}:${a.entity}`);
     assert.ok(actions.includes('upload:test_footage') && actions.includes('delete:test_footage'));
   });
 });
 
 describe('audit trail (TC-API-AUDIT)', () => {
-  test('mutations and ingests are recorded; investors cannot read the log', async () => {
-    const r = await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.eng });
+  test('mutations and ingests are recorded; only administrators can read the log', async () => {
+    const r = await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.admin });
     assert.equal(r.status, 200);
     const actions = r.body.audit.map((a) => `${a.action}:${a.entity}`);
     for (const need of ['create:design_elements', 'create:estimate', 'generate:schedule', 'create:camera', 'set:site_status', 'ingest:frame', 'disable:camera']) {
       assert.ok(actions.includes(need), `missing ${need}`);
     }
     assert.equal((await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.inv })).status, 403);
+    assert.equal((await api('GET', `/api/projects/${projectId}/audit`, { token: tokens.eng })).status, 403);
   });
 });

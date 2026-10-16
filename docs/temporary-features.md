@@ -2,12 +2,12 @@
 
 ## Test footage (added in sprint 2, to be removed)
 
-**What it is.** In a project, engineers and administrators have a "Test footage" tab. They upload a video (mp4, mov, avi, webm, mkv) or a single image; the inference service samples frames, runs YOLO-World on them and returns annotated frames and a per-object summary. It exists so the team can see what the model finds in real footage before real cameras are connected.
+**What it is.** In a project, engineers have a "Test footage" tab (administrators and investors do not, and the API refuses them). They upload a video (mp4, mov, avi, webm, mkv) or a single image; the inference service samples frames, runs YOLO-World on them and returns annotated frames and a per-object summary. It exists so the team can see what the model finds in real footage before real cameras are connected.
 
 **Why it must go.** The project's promise is that nobody on site can enter or edit evidence. An upload button is a human path to the vision model. To keep the promise while it exists, it is a sandbox:
 
 - Results live only in `test_runs` / `test_frames` and `storage/testing/`. Nothing is written to `media`, `defects`, `inference_runs` or any observation table, so progress, spend, hazards, risk scores, forecasts, alerts and the investor dashboard cannot be affected. Test `SANDBOX` in TC-API-FOOTAGE checks this.
-- Investors cannot upload, list or delete runs (403). Uploads and deletions are audited.
+- Administrators and investors cannot upload, list, view or delete runs (403). Uploads and deletions are audited.
 - One run at a time per project; file type checked by magic bytes; size limit `MAX_TEST_UPLOAD_MB` (300).
 
 **Sampling rule (why 3 seconds).** One window per `interval_s` (default 3, allowed 1-10). In each window up to 6 candidate frames are read and the sharpest (Laplacian variance) is analysed, because motion blur costs more accuracy than a late frame. A frame that differs from the last analysed frame by under 2 grey levels is not re-analysed (re-checked at least every 15 s). A detection is "confirmed" only if it overlaps (IoU >= 0.3) a detection of the same label in the previous analysed frame. At most 400 frames per run (hard limit 600); if the footage is longer the interval is widened and the run says so. Measured on the real model: about 0.3 s per analysed frame on CPU, so a 1-hour video at the default takes roughly 20 minutes in the worst case and far less when the scene is static. The model is limited to half the CPU cores (`YOLO_THREADS`) and jobs run one at a time.
