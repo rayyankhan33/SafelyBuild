@@ -13,7 +13,7 @@ A trained model that finds concrete cracks in site photos and CCTV footage. This
 | Model | `services/inference/models/crack_cnn.onnx` (16.8 MB) + `crack_cnn.json` | Weights and metadata (threshold, metrics, training settings) |
 | Frame scanner | `services/inference/crack_model.py` | Multi-scale sliding windows, per-pixel mean probability, connected regions with box, score and severity. OpenCV only; PyTorch is not needed to run it |
 | CCTV monitor | `services/inference/crack_video.py` | Samples a video file / webcam / RTSP stream, requires a crack to persist over several scans, reports each new crack once |
-| Integration | `plugins/crack_cnn.py`, migration `004`, `domain/risk.js` | One plugin in the backend registry ([model-integration.md](model-integration.md)): `crack_cnn` (cracks only). New defect type `concrete_crack`; it raises the existing "Excessive cracking" hazard (library code `STR-CRACK`) by the same evidence rules as other hazards. **Not active by default** (see section 5, item 7) |
+| Integration | `plugins/crack_cnn.py`, `plugins/tiles_and_cracks.py`, migration `004`, `domain/risk.js` | Two plugins in the backend registry ([model-integration.md](model-integration.md)): `crack_cnn` (cracks only) and `tiles_and_cracks` (rust/honeycomb heuristics plus cracks). New defect type `concrete_crack`; it raises the existing "Excessive cracking" hazard (library code `STR-CRACK`) by the same evidence rules as other hazards. **Not active by default** (see section 5, item 7) |
 | Tests | `tests/test_crack.py` (21 tests), one API test and one unit test for the new defect type | Stub-model tests plus tests on the real model |
 
 How a frame is analysed: the frame is scanned with square windows of 256, 384 and 512 px (50% overlap). Each window is resized to 224 px and classified. Window probabilities are averaged per pixel into a heat map; areas at or above the threshold become crack regions. For CCTV, a region is reported only after it appears in 3 consecutive scans (default one scan every 2 s).
@@ -88,7 +88,7 @@ About 1 s to scan a 1280x720 frame with 3 window scales on this 2-core CPU (15 f
 4. **Coarse boxes.** Regions are unions of 256-512 px windows, not crack outlines.
 5. **Very few clean photographs** (7 in training) make the threshold noisy: validation picked 0.91, but the F1-optimal value on the test photographs would have been about 0.8.
 6. The model is a binary classifier on windows, not a detector: it cannot separate cracks from joints, formwork lines, shadows or rust, which also look like dark lines.
-7. Because of the false alarms above the crack backends are **not active** (the registry never activates a plugin silently). On the rust/honeycomb sample photos the crack model flags crack regions that are not cracks. To use it anyway: set `BACKEND_DEFECTS=crack_cnn` before starting the inference service, or write `{"defects": "crack_cnn"}` to `services/inference/models/active.json`. Try it first without activating: `POST /v1/defects?backend=crack_cnn`.
+7. Because of the false alarms above the crack backends are **not active** (the registry never activates a plugin silently). On the rust/honeycomb sample photos the crack model flags crack regions that are not cracks. To use it anyway: set `BACKEND_DEFECTS=tiles_and_cracks` (or `crack_cnn`) before starting the inference service, or write `{"defects": "tiles_and_cracks"}` to `services/inference/models/active.json`. Try it first without activating: `POST /v1/defects?backend=crack_cnn`.
 
 ## 6. How to improve it (the next step, needs the team)
 

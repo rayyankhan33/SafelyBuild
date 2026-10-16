@@ -33,7 +33,7 @@ Demo logins and what to check in each view: [docs/demo-accounts.md](docs/demo-ac
 ```bash
 cd services/inference
 .venv/Scripts/python crack_video.py --source site_cam.mp4 --every 2 --out annotated.mp4 --events events.json
-# use it inside the app:  set BACKEND_DEFECTS=crack_cnn before starting the inference service
+# use it inside the app:  set BACKEND_DEFECTS=tiles_and_cracks  (or crack_cnn) before starting the inference service
 ```
 
 ## Documents

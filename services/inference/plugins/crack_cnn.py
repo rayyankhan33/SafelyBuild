@@ -6,7 +6,7 @@ it was trained and measured, including its false-alarm problem on photographs un
 
 Try it without activating it:   POST /v1/defects?backend=crack_cnn
 Activate it (cracks only):      BACKEND_DEFECTS=crack_cnn   or   models/active.json {"defects": "crack_cnn"}
-Only one defects backend is active at a time, so activating this one replaces the rust/honeycomb heuristics (opencv_tiles).
+To keep rust/honeycomb detection AND add cracks, activate "tiles_and_cracks" instead.
 """
 
 import json
