@@ -32,3 +32,7 @@ Thumbs.db
 
 # ultralytics/CLIP download cache
 weights/
+
+# synthetic yard dataset and training runs are regenerable (synth/yard.py, train_yard.py)
+services/inference/data/
+services/inference/runs/

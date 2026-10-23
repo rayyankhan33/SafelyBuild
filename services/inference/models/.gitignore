@@ -8,3 +8,7 @@
 *.ckpt
 # the trained crack model (16.8 MB) IS committed on purpose so the app works after a clone; see docs/crack-model.md
 !crack_cnn.onnx
+# the trained yard model (6 MB) and its measurements ARE committed on purpose; see docs/financial-model.md
+!yard_seg.pt
+!yard_seg.json
+!yard_seg_eval.json

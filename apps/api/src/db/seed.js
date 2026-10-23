@@ -27,7 +27,7 @@ import { inferenceHealth } from '../inference.js';
 import { createCamera, ingestFrame } from '../services/ingest.js';
 import { rebuild } from '../services/rollup.js';
 import { recompute } from '../services/forecast.js';
-import { createEstimate, createProject, generateProjectSchedule, getActiveEstimate, getSchedule, setSiteStatus } from '../services/projects.js';
+import { createEstimate, createProject, generateProjectSchedule, getActiveEstimate, getSchedule, setCostRates, setSiteStatus } from '../services/projects.js';
 
 export const DEMO_PASSWORD = process.env.DEMO_PASSWORD || 'SafelyBuild-Demo-1';
 export const DEMO_USERS = [
@@ -44,6 +44,11 @@ function rng(seed) {
 
 const YARD_SCALE = 0.1; // metres per pixel of the yard camera
 const EQUIPMENT = [{ type: 'Concrete mixer', count: 2 }, { type: 'Poker vibrator', count: 3 }, { type: 'Tower crane', count: 1 }];
+// Indicative demo rates (PKR), entered once by the engineer at inception and then locked.
+export const DEMO_COST_RATES = {
+  crew_rate_pkr: 60_000, overhead_pct: 8,
+  equipment: [{ type: 'Concrete mixer', rate_pkr: 4000, planned_units: 2 }, { type: 'Poker vibrator', rate_pkr: 1500, planned_units: 3 }, { type: 'Tower crane', rate_pkr: 25_000, planned_units: 1 }],
+};
 
 // Inspection-camera scenario, by working-day index from project start. 'bad' frames are REAL sample
 // photos (rusted rebar / honeycomb); 'clean' frames show an empty area. Three consecutive clean days
@@ -132,6 +137,8 @@ export async function seed({ reset = false, quiet = false } = {}) {
       [created.id, label, type, qty, l, type === 'masonry_wall' ? null : w, type === 'masonry_wall' ? w : h, t, fc]);
   }
   const est = await createEstimate(pool, created, users.engineer.id, { contingency_pct: 5, activate: true });
+  // ---- engineer input: labour, equipment and overhead rates, once, then locked
+  await setCostRates(pool, created, users.engineer, DEMO_COST_RATES);
   const project = (await pool.query('SELECT * FROM projects WHERE id = $1', [created.id])).rows[0];
   const sched = await generateProjectSchedule(pool, project, {});
   const p = (await pool.query('SELECT * FROM projects WHERE id = $1', [project.id])).rows[0];
@@ -186,7 +193,8 @@ export async function seed({ reset = false, quiet = false } = {}) {
       const factor = 1.08 + rand() * 0.08; // site uses 8-16 % more material than estimated
       for (const l of active.lines.filter((x) => x.element_id === t.element_id)) use[l.material_code] = (use[l.material_code] ?? 0) + Number(l.quantity) * inc * factor;
     }
-    for (const [code, q] of Object.entries(use)) truthSpend += q * (DEMO_PRICES[code] ?? 0);
+    let materialsToday = 0;
+    for (const [code, q] of Object.entries(use)) materialsToday += q * (DEMO_PRICES[code] ?? 0);
     const stockAtStart = {};
     for (const code of Object.keys(stock)) {
       const need = use[code] ?? 0;
@@ -196,7 +204,12 @@ export async function seed({ reset = false, quiet = false } = {}) {
     }
 
     // engineer input 2 and 3: crews and equipment on site
-    await setSiteStatus(pool, p, users.engineer, d, { crews: perf < 0.6 ? 0 : 1, equipment: EQUIPMENT });
+    const crewsToday = perf < 0.6 ? 0 : 1;
+    await setSiteStatus(pool, p, users.engineer, d, { crews: crewsToday, equipment: EQUIPMENT });
+    // truth of the day's total cost: materials + labour + equipment + overheads, at the locked rates
+    const labourToday = crewsToday * DEMO_COST_RATES.crew_rate_pkr;
+    const equipmentToday = EQUIPMENT.reduce((n, u) => n + u.count * DEMO_COST_RATES.equipment.find((e) => e.type === u.type).rate_pkr, 0);
+    truthSpend += (materialsToday + labourToday + equipmentToday) * (1 + DEMO_COST_RATES.overhead_pct / 100);
 
     // cameras report: two frames from the yard camera
     for (const [n, hour] of [[0, 3], [1, 11]]) {

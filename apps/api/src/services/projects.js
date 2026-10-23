@@ -3,6 +3,7 @@
 import { withTx } from '../db/pool.js';
 import { bad, HttpError, notFound } from '../http.js';
 import { estimate as runEstimate, validateElement } from '../domain/estimation.js';
+import { normType, plannedTaskCost, validateRates } from '../domain/cost.js';
 import { generateSchedule } from '../domain/schedule.js';
 import { diffDays, today } from '../domain/dates.js';
 import { notifyAdmins } from './notifications.js';
@@ -106,6 +107,29 @@ export async function getActiveEstimate(db, projectId) {
 const numify = (e) => ({ ...e, length_m: num(e.length_m), width_m: num(e.width_m), height_m: num(e.height_m),
   thickness_m: num(e.thickness_m), rebar_kg_per_m3: num(e.rebar_kg_per_m3) });
 
+// ------------------------------------------------------------------ cost rates (labour, equipment, overheads): entered once, then locked
+export async function getCostRates(db, projectId) {
+  const head = (await db.query('SELECT crew_rate_pkr, overhead_pct, set_at FROM cost_rates WHERE project_id = $1', [projectId])).rows[0];
+  if (!head) return null;
+  const { rows } = await db.query('SELECT equipment_type AS type, rate_pkr, planned_units FROM cost_rate_equipment WHERE project_id = $1 ORDER BY equipment_type', [projectId]);
+  return { crew_rate_pkr: Number(head.crew_rate_pkr), overhead_pct: Number(head.overhead_pct), set_at: head.set_at,
+    equipment: rows.map((e) => ({ type: e.type, rate_pkr: Number(e.rate_pkr), planned_units: e.planned_units })), locked: true };
+}
+
+export async function setCostRates(db, project, user, body) {
+  const equipment = (body.equipment ?? []).map((e) => ({ type: normType(e.type), rate_pkr: e.rate_pkr, planned_units: e.planned_units }));
+  const problems = validateRates({ ...body, equipment });
+  if (problems.length) throw bad('the cost rates are not valid', problems);
+  if (await getCostRates(db, project.id)) throw new HttpError(409, 'rates_locked', 'the cost rates for this project were already set and are locked; changing them needs change control');
+  return withTx(db, async (c) => {
+    for (const e of equipment) {
+      await c.query('INSERT INTO cost_rate_equipment (project_id, equipment_type, rate_pkr, planned_units) VALUES ($1,$2,$3,$4)', [project.id, e.type, e.rate_pkr, e.planned_units]);
+    }
+    await c.query('INSERT INTO cost_rates (project_id, crew_rate_pkr, overhead_pct, set_by) VALUES ($1,$2,$3,$4)', [project.id, body.crew_rate_pkr, body.overhead_pct, user.id]);
+    return getCostRates(c, project.id);
+  });
+}
+
 // ------------------------------------------------------------------ schedule
 export async function generateProjectSchedule(db, project, { crews, confirm_reset = false }) {
   const est = await getActiveEstimate(db, project.id);
@@ -130,21 +154,27 @@ export async function generateProjectSchedule(db, project, { crews, confirm_rese
     if (e instanceof RangeError) throw bad(e.message);
     throw e;
   }
+  // labour, equipment and overheads (if the engineer has set the rates) are added to each task's materials budget
+  const costRates = await getCostRates(db, project.id);
+  for (const t of sched.tasks) {
+    const parts = plannedTaskCost(t.planned_cost_pkr, t.duration_days, costRates, useCrews);
+    Object.assign(t, { planned_cost_pkr: parts.total, planned_labour_pkr: parts.labour, planned_equipment_pkr: parts.equipment, planned_overhead_pkr: parts.overheads });
+  }
   return withTx(db, async (c) => {
     await c.query('DELETE FROM schedule_tasks WHERE project_id = $1', [project.id]);
     const idBySeq = {};
     for (const t of sched.tasks) {
       const r = await c.query(
-        `INSERT INTO schedule_tasks (project_id, element_id, name, seq, planned_start, planned_end, planned_cost_pkr)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-        [project.id, t.element_id, t.name, t.seq, t.planned_start, t.planned_end, t.planned_cost_pkr]);
+        `INSERT INTO schedule_tasks (project_id, element_id, name, seq, planned_start, planned_end, planned_cost_pkr, planned_labour_pkr, planned_equipment_pkr, planned_overhead_pkr)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+        [project.id, t.element_id, t.name, t.seq, t.planned_start, t.planned_end, t.planned_cost_pkr, t.planned_labour_pkr ?? 0, t.planned_equipment_pkr ?? 0, t.planned_overhead_pkr ?? 0]);
       idBySeq[t.seq] = r.rows[0].id;
     }
     for (const d of sched.dependencies) {
       await c.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES ($1,$2)', [idBySeq[d.seq], idBySeq[d.depends_on_seq]]);
     }
     await c.query('UPDATE projects SET planned_end_date = $2, status = $3 WHERE id = $1', [project.id, sched.planned_end, 'active']);
-    return { ...sched, crews: useCrews };
+    return { ...sched, crews: useCrews, cost_scope: costRates ? 'total' : 'materials' };
   });
 }
 

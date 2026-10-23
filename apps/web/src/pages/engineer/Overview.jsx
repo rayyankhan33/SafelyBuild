@@ -1,5 +1,6 @@
 // Engineer's technical overview: variances, indices and the method behind them. The plain-language
 // story told to investors lives on the investor pages, not here.
+import CostBreakdown from '../../components/CostBreakdown.jsx';
 import { Badge, DailySpendChart, MoneyChart, ProductivityChart, ProgressChart } from '../../components.jsx';
 
 export default function Overview({ data }) {
@@ -27,6 +28,8 @@ export default function Overview({ data }) {
           {' '}Method: {h.budget.method ?? 'EAC = BAC / CPI'}; schedule forecast = planned duration / SPI (ANSI/EIA-748 earned value).
         </p>
       </div>
+      <div style={{ marginBottom: 16 }}><CostBreakdown cost={data.cost} showSources /></div>
+      {data.cost?.warnings?.map((w) => <div key={w} className="alert warning" style={{ marginBottom: 12 }}><b>!</b><div>{w}</div></div>)}
       <div className="grid cols-2">
         <MoneyChart series={data.series} bac={h.budget.bac} />
         <ProgressChart series={data.series} bac={h.budget.bac} />

@@ -628,6 +628,101 @@ describe('accounts, notifications and project creation (TC-API-ACCT)', () => {
   });
 });
 
+describe('total cost: labour, equipment and overheads (TC-API-COST)', () => {
+  let pid; const p = () => `/api/projects/${pid}`;
+  const RATES = { crew_rate_pkr: 50_000, overhead_pct: 10, equipment: [{ type: 'Concrete mixer', rate_pkr: 4000, planned_units: 2 }] };
+  before(async () => {
+    pid = (await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'Cost project', start_date: addDays(today(), -4) } })).body.project.id;
+    await api('POST', `${p()}/elements`, { token: tokens.eng, body: { label: 'Slab', element_type: 'slab', length_m: 10, width_m: 10, thickness_m: 0.15, concrete_fc_mpa: 25 } });
+    await api('POST', `${p()}/estimates`, { token: tokens.eng, body: { contingency_pct: 5, activate: true } });
+    const inv = (await pool.query("SELECT id FROM users WHERE email = 'inv@a.test'")).rows[0].id;
+    await pool.query('INSERT INTO project_members VALUES ($1,$2)', [pid, inv]);
+  });
+
+  test('only the project engineer sets the rates: administrators, investors, outsiders and anonymous callers are refused', async () => {
+    const post = (token) => api('POST', `${p()}/cost-rates`, { token, body: RATES });
+    assert.equal((await post(tokens.admin)).status, 403);
+    assert.equal((await post(tokens.inv)).status, 403);
+    assert.equal((await post(tokens.eng2)).status, 404);
+    assert.equal((await post(tokens.engB)).status, 404);
+    assert.equal((await post(undefined)).status, 401);
+    assert.equal((await api('GET', `${p()}/cost-rates`, { token: tokens.inv })).status, 403);
+    assert.equal((await api('GET', `${p()}/cost-rates`, { token: tokens.eng })).body.rates, null);
+  });
+  test('invalid rates are refused with reasons and nothing is stored', async () => {
+    const post = (body) => api('POST', `${p()}/cost-rates`, { token: tokens.eng, body });
+    assert.equal((await post({ ...RATES, crew_rate_pkr: -5 })).status, 422);
+    assert.equal((await post({ ...RATES, overhead_pct: 150 })).status, 422);
+    assert.equal((await post({ ...RATES, crew_rate_pkr: 'lots' })).status, 422);
+    assert.equal((await post({ ...RATES, surprise: 1 })).status, 422);                       // strict schema
+    const dup = await post({ ...RATES, equipment: [{ type: 'Mixer', rate_pkr: 1, planned_units: 1 }, { type: ' mixer', rate_pkr: 2, planned_units: 1 }] });
+    assert.equal(dup.status, 422); assert.match(JSON.stringify(dup.body.error.details), /twice/);
+    assert.equal((await post({ ...RATES, equipment: [{ type: 'Mixer', rate_pkr: 1, planned_units: 1.5 }] })).status, 422);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM cost_rates WHERE project_id = $1', [pid])).rows[0].n, 0);
+  });
+  test('rates are set once and then locked, in the API and in the database', async () => {
+    const r = await api('POST', `${p()}/cost-rates`, { token: tokens.eng, body: RATES });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.rates.equipment[0].type, 'concrete mixer');                           // normalised
+    assert.equal((await api('GET', `${p()}/cost-rates`, { token: tokens.admin })).body.rates.crew_rate_pkr, 50_000);   // admins may read
+    const again = await api('POST', `${p()}/cost-rates`, { token: tokens.eng, body: { ...RATES, crew_rate_pkr: 1 } });
+    assert.equal(again.status, 409); assert.equal(again.body.error.code, 'rates_locked');
+    await assert.rejects(pool.query('UPDATE cost_rates SET crew_rate_pkr = 1 WHERE project_id = $1', [pid]), /locked/);
+    await assert.rejects(pool.query('UPDATE cost_rate_equipment SET rate_pkr = 1 WHERE project_id = $1', [pid]), /locked/);
+    await assert.rejects(pool.query("INSERT INTO cost_rate_equipment VALUES ($1, 'crane', 1, 1)", [pid]), /locked/);
+    assert.equal((await pool.query('SELECT crew_rate_pkr::int AS c FROM cost_rates WHERE project_id = $1', [pid])).rows[0].c, 50_000);
+  });
+  test('the baseline budget of every task includes labour, equipment and overheads, and the parts add up', async () => {
+    assert.equal((await api('POST', `${p()}/schedule/generate`, { token: tokens.eng, body: { crews: 2 } })).status, 201);
+    const tasks = (await api('GET', `${p()}/schedule`, { token: tokens.eng })).body.tasks;
+    assert.ok(tasks.length >= 1);
+    for (const t of tasks) {
+      const days = (await pool.query("SELECT count(*)::int n FROM generate_series($1::date, $2::date, interval '1 day') d WHERE extract(dow FROM d) <> 0", [t.planned_start, t.planned_end])).rows[0].n;
+      const labour = Number(t.planned_labour_pkr); const equipment = Number(t.planned_equipment_pkr); const overhead = Number(t.planned_overhead_pkr);
+      assert.equal(labour, 2 * 50_000 * days);                                                // 2 planned crews
+      assert.equal(equipment, 2 * 4000 * days);                                               // 2 planned mixers
+      const materials = Number(t.planned_cost_pkr) - labour - equipment - overhead;
+      assert.ok(materials > 0);
+      assert.ok(Math.abs(overhead - (materials + labour + equipment) * 0.1) < 0.05, 'overheads are 10 % of the direct cost');
+    }
+    const d = await dash(tokens.eng, pid);
+    assert.equal(d.cost.scope, 'total');
+    const sum = d.cost.planned.materials + d.cost.planned.labour + d.cost.planned.equipment + d.cost.planned.overheads;
+    assert.ok(Math.abs(sum - d.cost.planned.total) < 0.05);
+    assert.ok(Math.abs(d.cost.planned.total - d.metrics.bac) < 0.05, 'the earned-value budget is the total budget');
+  });
+  test('actual labour, equipment and overheads accrue from the daily site log at the locked rates', async () => {
+    const date = addDays(today(), -1);
+    const put = await api('PUT', `${p()}/site-status/${date}`, { token: tokens.eng, body: { crews: 2, equipment: [{ type: 'CONCRETE MIXER', count: 1 }, { type: 'Excavator', count: 1 }] } });
+    assert.equal(put.status, 200);
+    const d = await dash(tokens.eng, pid);
+    assert.equal(d.cost.actual.labour, 100_000);
+    assert.equal(d.cost.actual.equipment, 4000);                                              // the excavator has no rate
+    assert.equal(d.cost.actual.overheads, 10_400);                                            // 10 % of 104,000
+    assert.equal(d.cost.actual.materials, 0);
+    assert.equal(d.metrics.ac, 114_400);                                                      // earned-value actual cost is the total
+    assert.match(d.cost.warnings.join(), /excavator/);
+  });
+  test('investors see planned and actual cost by category but never the rates or engineering warnings', async () => {
+    const d = await dash(tokens.inv, pid);
+    assert.equal(d.cost.actual.labour, 100_000); assert.equal(d.cost.scope, 'total');
+    assert.equal(d.cost.rates, undefined); assert.equal(d.cost.warnings, undefined);
+    assert.doesNotMatch(JSON.stringify(d), /crew_rate|hire/i);
+    const a = await dash(tokens.admin, pid);
+    assert.equal(a.cost.actual.total, d.cost.actual.total);
+  });
+  test('a project without rates stays materials-only and accrues no labour or equipment', async () => {
+    const d = await dash(tokens.eng);                                                        // the main test project has no rates
+    assert.equal(d.cost.scope, 'materials');
+    assert.equal(d.cost.actual.labour, 0); assert.equal(d.cost.actual.equipment, 0); assert.equal(d.cost.actual.overheads, 0);
+    assert.equal(d.cost.planned.labour, 0);
+  });
+  test('setting the rates is audited', async () => {
+    const actions = (await api('GET', `${p()}/audit`, { token: tokens.admin })).body.audit.map((a) => `${a.action}:${a.entity}`);
+    assert.ok(actions.includes('create:cost_rates'));
+  });
+});
+
 describe('the three roles do not overlap (TC-API-ROLES)', () => {
   const p = () => `/api/projects/${projectId}`;
   test('administrators cannot enter project content: BOQ, estimate, schedule, crews, alert acknowledgement', async () => {

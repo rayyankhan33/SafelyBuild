@@ -1,6 +1,7 @@
 // Investor budget page: where the money stands, where it went, and what the final cost is expected to be.
 import { Badge, DailySpendChart, Kpi, MoneyChart } from '../../components.jsx';
 import { pkr } from '../../api.js';
+import CostBreakdown from '../../components/CostBreakdown.jsx';
 import { Footnote, NotReady } from './Shared.jsx';
 
 export default function Budget({ data }) {
@@ -22,16 +23,19 @@ export default function Budget({ data }) {
         <MoneyChart series={data.series} bac={b.bac} />
         <DailySpendChart series={data.series} />
       </div>
-      <div className="card table-wrap" style={{ marginTop: 16 }}>
-        <h2>Where the materials money went</h2>
-        <table>
-          <thead><tr><th>Material</th><th className="num">Spent</th><th className="num">Share</th></tr></thead>
-          <tbody>
-            {data.spend_by_material.map((m) => <tr key={m.material}><td>{m.material}</td><td className="num">{pkr(m.cost_pkr)}</td><td className="num">{total ? Math.round((m.cost_pkr / total) * 100) : 0}%</td></tr>)}
-            {!data.spend_by_material.length && <tr><td colSpan={3} className="muted">No material use measured yet.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <div style={{ marginTop: 16 }}><CostBreakdown cost={data.cost} /></div>
+      {(
+        <div className="card table-wrap" style={{ marginTop: 16 }}>
+          <h2>Materials spent, by material</h2>
+          <table>
+            <thead><tr><th>Material</th><th className="num">Spent</th><th className="num">Share of materials</th></tr></thead>
+            <tbody>
+              {data.spend_by_material.map((m) => <tr key={m.material}><td>{m.material}</td><td className="num">{pkr(m.cost_pkr)}</td><td className="num">{total ? Math.round((m.cost_pkr / total) * 100) : 0}%</td></tr>)}
+              {!data.spend_by_material.length && <tr><td colSpan={3} className="muted">No material use measured yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
       <Footnote data={data} />
     </>
   );

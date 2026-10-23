@@ -17,7 +17,7 @@ import { createCamera, listCameras, setCameraActive } from '../services/ingest.j
 import { listNotifications, markAllRead, markRead } from '../services/notifications.js';
 import * as testfootage from '../services/testfootage.js';
 import {
-  createEstimate, createProject, generateProjectSchedule, getActiveEstimate, getSchedule, listSiteStatus, loadRates, setPriceBook, setSiteStatus,
+  createEstimate, createProject, generateProjectSchedule, getActiveEstimate, getCostRates, setCostRates, getSchedule, listSiteStatus, loadRates, setPriceBook, setSiteStatus,
 } from '../services/projects.js';
 
 export const router = Router();
@@ -149,6 +149,19 @@ router.get('/projects/:pid/estimates/active', staff, wrap(async (req, res) => {
   if (!est) throw notFound('active estimate');
   res.json({ estimate: est });
 }));
+
+// ------------------------------------------------------------------ labour, equipment and overheads: entered once, then locked
+const costRatesSchema = z.object({
+  crew_rate_pkr: z.number().min(0).max(10_000_000),
+  overhead_pct: z.number().min(0).max(100),
+  equipment: z.array(z.object({ type: z.string().min(1).max(80), rate_pkr: z.number().min(0).max(100_000_000), planned_units: z.number().int().min(0).max(1000) }).strict()).max(30).default([]),
+}).strict();
+router.post('/projects/:pid/cost-rates', eng, wrap(async (req, res) => {
+  const rates = await setCostRates(pool, req.project, req.user, parse(costRatesSchema, req.body ?? {}));
+  await audit(pool, req, 'create', 'cost_rates', req.project.id, { crew_rate_pkr: rates.crew_rate_pkr, overhead_pct: rates.overhead_pct, equipment: rates.equipment.length });
+  res.status(201).json({ rates, note: 'Rates are now locked. Regenerate the schedule so the baseline budget includes labour, equipment and overheads.' });
+}));
+router.get('/projects/:pid/cost-rates', staff, wrap(async (req, res) => res.json({ rates: await getCostRates(pool, req.project.id) })));
 
 // ------------------------------------------------------------------ schedule
 router.post('/projects/:pid/schedule/generate', eng, wrap(async (req, res) => {

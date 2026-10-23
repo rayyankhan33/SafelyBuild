@@ -36,7 +36,8 @@ Owners are **proposed** from the proposal's work division; the team should confi
 | 18 | Camera tamper checks (lens covered, redirected) | Rayyan | **Not started** | design.md section 10 |
 | 19 | UI automated tests | Atyab | **Not started** | - |
 | 20 | Mid report text (R&D, gap analysis) | All | **Team to write** | - |
-| 21 | Total cost: engineer-entered, locked inception rates, labour/equipment/overhead accrual, breakdown (FR-34, FR-35) | Rayyan | **Decided 2026-10-13, not built** (Sprint 2) | docs/proposal-revised.md D1, D2 |
+| 21 | Total cost: engineer-entered locked inception rates, labour/equipment/overhead accrual, breakdown (FR-34, FR-35) | Rayyan | **Built 2026-10-22** (labour crew-rate, equipment hire rate, overhead %; formwork **not** built); `domain/cost.js`, migration 007, TC-COST, TC-API-COST | docs/proposal-revised.md D1, D2 |
+| 21b | Yard material-segmentation model for stock estimates (vision half of the financial module): synthetic generator, fine-tuned YOLO11n-seg, `yard_seg` plugin, evaluation against the classical baseline | Rayyan | **Built and measured on synthetic data only** (see [financial-model.md](financial-model.md)); opt-in, not active; no real-yard accuracy | `synth/yard.py`, `train_yard.py`, `evaluate_yard.py`, `plugins/yard_seg.py`, `tests/test_yard.py` |
 | 22 | Completion lifecycle: placed / curing / finished / inspected with evidence-cleared warnings (FR-36) | Rayyan + Hadi | **Decided, not built** (Sprint 2) | docs/proposal-revised.md D4 |
 | 23 | Change control with administrator + investor approval and versioned baselines (FR-37) | Rayyan | **Decided, not built** (Sprint 3) | docs/proposal-revised.md D3 |
 

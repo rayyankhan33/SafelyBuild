@@ -7,12 +7,13 @@ import { desiredAlerts, diffAlerts } from '../domain/alerts.js';
 import { budgetText, scheduleText, productivityText, safetyText } from '../domain/narrative.js';
 import { cameraHealth, evidenceSummary, uncoveredTasks } from '../domain/evidence.js';
 import { diffDays, today } from '../domain/dates.js';
-import { getActiveEstimate } from './projects.js';
+import { accrueCosts, plannedTotals, totalsByCategory } from '../domain/cost.js';
+import { getActiveEstimate, getCostRates } from './projects.js';
 import { siteDate } from './ingest.js';
 
 export async function loadState(db, project) {
   const q = (text, params = [project.id]) => db.query(text, params).then((r) => r.rows);
-  const [tasks, progress, spend, defects, analysed, hazards, crews, cameras] = await Promise.all([
+  const [tasks, progress, spend, defects, analysed, hazards, crews, cameras, costRates] = await Promise.all([
     q('SELECT * FROM schedule_tasks WHERE project_id = $1 ORDER BY seq'),
     q(`SELECT l.log_date AS date, tp.task_id, tp.percent_complete AS percent
        FROM task_progress tp JOIN daily_logs l ON l.id = tp.daily_log_id WHERE l.project_id = $1`),
@@ -25,13 +26,14 @@ export async function loadState(db, project) {
        FROM hazards h LEFT JOIN hazard_library hl ON hl.id = h.library_id LEFT JOIN standards_refs s ON s.id = hl.standard_id
        LEFT JOIN cameras c ON c.id = h.camera_id
        WHERE h.project_id = $1 ORDER BY h.risk_rating DESC, h.created_at`),
-    q(`SELECT log_date AS date, crews FROM daily_logs WHERE project_id = $1 AND crews IS NOT NULL ORDER BY log_date`),
+    q(`SELECT log_date AS date, crews, equipment FROM daily_logs WHERE project_id = $1 AND crews IS NOT NULL ORDER BY log_date`),
     q(`SELECT id, name, kind, element_id, active, last_frame_at FROM cameras WHERE project_id = $1 ORDER BY kind, name`),
+    getCostRates(db, project.id),
   ]);
   return {
-    tasks: tasks.map((t) => ({ ...t, planned_cost_pkr: Number(t.planned_cost_pkr) })),
+    tasks: tasks.map((t) => ({ ...t, planned_cost_pkr: Number(t.planned_cost_pkr), planned_labour_pkr: Number(t.planned_labour_pkr), planned_equipment_pkr: Number(t.planned_equipment_pkr), planned_overhead_pkr: Number(t.planned_overhead_pkr) })),
     progress: progress.map((p) => ({ ...p, percent: Number(p.percent) })),
-    spend, defects, analysed, hazards, crews,
+    spend, defects, analysed, hazards, crews, costRates,
     cameras: cameras.map((c) => ({ ...c, last_frame_date: c.last_frame_at ? siteDate(new Date(c.last_frame_at)) : null })),
   };
 }
@@ -56,7 +58,10 @@ export async function recompute(db, project, asOf = today()) {
   const state = await loadState(db, project);
   if (!state.tasks.length || !project.planned_end_date) return { ready: false, reason: 'no schedule yet', state };
 
-  const ev = evaluate({ tasks: state.tasks, progress: state.progress, spend: state.spend, asOf,
+  // total cost = camera-measured materials + labour/equipment/overheads accrued from the engineer's site log at the locked rates
+  const acc = accrueCosts(state.spend, state.crews, state.costRates);
+  const cost = { scope: state.costRates ? 'total' : 'materials', planned: plannedTotals(state.tasks), actual: totalsByCategory(acc.rows, asOf), warnings: acc.warnings };
+  const ev = evaluate({ tasks: state.tasks, progress: state.progress, spend: acc.rows, asOf,
     projectStart: project.start_date, plannedEnd: project.planned_end_date, crews: state.crews });
   const sdi = computeSdi(state.defects, state.analysed, asOf);
   const evidence = evidenceState(state, project, asOf);
@@ -88,7 +93,7 @@ export async function recompute(db, project, asOf = today()) {
   }
   if (toResolve.length) await db.query('UPDATE alerts SET resolved_at = now() WHERE id = ANY($1::uuid[])', [toResolve]);
 
-  return { ready: true, asOf, state, evidence, ...ev, sdi, safety };
+  return { ready: true, asOf, state, evidence, cost, ...ev, sdi, safety };
 }
 
 // ------------------------------------------------------------------ dashboards
@@ -133,6 +138,7 @@ export async function buildDashboard(db, project, role, asOf = today()) {
       safety: { status: r.safety.status, text: sf.plain + evNote, evidence_gap: r.safety.evidence_gap },
       productivity: { ...m.productivity, text: productivityText(m.productivity) },
     },
+    cost: { scope: r.cost.scope, planned: r.cost.planned, actual: r.cost.actual },
     evidence: {
       cameras_ok: r.evidence.health.filter((h) => h.status === 'ok').length,
       cameras_expected: r.evidence.health.filter((h) => ['ok', 'stale', 'never'].includes(h.status)).length,
@@ -195,6 +201,7 @@ export async function buildDashboard(db, project, role, asOf = today()) {
       safety: { ...investor.headline.safety, technical: sf.technical, detail: r.safety },
     },
     metrics: m,
+    cost: { ...investor.cost, warnings: r.cost.warnings, rates: r.state.costRates },
     series: { planned: r.series.planned, actual: r.series.actual },
     risk: {
       sdi: r.sdi, safety: r.safety, clean_days_to_close: CLEAN_DAYS_TO_CLOSE,

@@ -1,0 +1,156 @@
+{
+  "test": {
+    "model": {
+      "CEMENT": {
+        "frames_with_material": 70,
+        "recall": 0.971,
+        "precision": 0.986,
+        "median_abs_pct_error": 3.2,
+        "mean_signed_pct_error": 5.3
+      },
+      "SAND": {
+        "frames_with_material": 70,
+        "recall": 1.0,
+        "precision": 1.0,
+        "median_abs_pct_error": 2.2,
+        "mean_signed_pct_error": 1.7
+      },
+      "AGGREGATE": {
+        "frames_with_material": 67,
+        "recall": 1.0,
+        "precision": 1.0,
+        "median_abs_pct_error": 2.6,
+        "mean_signed_pct_error": 1.5
+      },
+      "BRICK": {
+        "frames_with_material": 63,
+        "recall": 1.0,
+        "precision": 0.969,
+        "median_abs_pct_error": 2.9,
+        "mean_signed_pct_error": 3.0
+      },
+      "REBAR": {
+        "frames_with_material": 61,
+        "recall": 0.984,
+        "precision": 0.984,
+        "median_abs_pct_error": 5.0,
+        "mean_signed_pct_error": 0.5
+      }
+    },
+    "classical": {
+      "CEMENT": {
+        "frames_with_material": 70,
+        "recall": 0.1,
+        "precision": 0.412,
+        "median_abs_pct_error": 34.4,
+        "mean_signed_pct_error": 16.2
+      },
+      "SAND": {
+        "frames_with_material": 70,
+        "recall": 0.186,
+        "precision": 0.765,
+        "median_abs_pct_error": 78.8,
+        "mean_signed_pct_error": 20.5
+      },
+      "AGGREGATE": {
+        "frames_with_material": 67,
+        "recall": 0.985,
+        "precision": 0.52,
+        "median_abs_pct_error": 1462.2,
+        "mean_signed_pct_error": 28575.3
+      },
+      "BRICK": {
+        "frames_with_material": 63,
+        "recall": 0.556,
+        "precision": 0.614,
+        "median_abs_pct_error": 26.7,
+        "mean_signed_pct_error": 42.7
+      },
+      "REBAR": {
+        "frames_with_material": 61,
+        "recall": 0.295,
+        "precision": 0.429,
+        "median_abs_pct_error": 80.8,
+        "mean_signed_pct_error": 157.9
+      }
+    },
+    "frames": 140
+  },
+  "test_shift": {
+    "model": {
+      "CEMENT": {
+        "frames_with_material": 71,
+        "recall": 0.986,
+        "precision": 0.814,
+        "median_abs_pct_error": 4.5,
+        "mean_signed_pct_error": 50.7
+      },
+      "SAND": {
+        "frames_with_material": 56,
+        "recall": 0.946,
+        "precision": 1.0,
+        "median_abs_pct_error": 2.1,
+        "mean_signed_pct_error": -1.8
+      },
+      "AGGREGATE": {
+        "frames_with_material": 56,
+        "recall": 1.0,
+        "precision": 0.875,
+        "median_abs_pct_error": 2.1,
+        "mean_signed_pct_error": 29.5
+      },
+      "BRICK": {
+        "frames_with_material": 69,
+        "recall": 0.71,
+        "precision": 0.98,
+        "median_abs_pct_error": 3.6,
+        "mean_signed_pct_error": -3.2
+      },
+      "REBAR": {
+        "frames_with_material": 63,
+        "recall": 0.984,
+        "precision": 0.984,
+        "median_abs_pct_error": 3.7,
+        "mean_signed_pct_error": 0.2
+      }
+    },
+    "classical": {
+      "CEMENT": {
+        "frames_with_material": 71,
+        "recall": 0.127,
+        "precision": 0.474,
+        "median_abs_pct_error": 63.6,
+        "mean_signed_pct_error": 73.3
+      },
+      "SAND": {
+        "frames_with_material": 56,
+        "recall": 0.071,
+        "precision": 0.4,
+        "median_abs_pct_error": 78.3,
+        "mean_signed_pct_error": -79.7
+      },
+      "AGGREGATE": {
+        "frames_with_material": 56,
+        "recall": 0.804,
+        "precision": 0.363,
+        "median_abs_pct_error": 29366.2,
+        "mean_signed_pct_error": 81629.5
+      },
+      "BRICK": {
+        "frames_with_material": 69,
+        "recall": 0.203,
+        "precision": 0.56,
+        "median_abs_pct_error": 87.3,
+        "mean_signed_pct_error": 71.1
+      },
+      "REBAR": {
+        "frames_with_material": 63,
+        "recall": 0.206,
+        "precision": 0.542,
+        "median_abs_pct_error": 72.6,
+        "mean_signed_pct_error": 145.8
+      }
+    },
+    "frames": 140
+  }
+}

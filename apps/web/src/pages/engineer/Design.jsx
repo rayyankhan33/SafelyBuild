@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, pkr, pkrFull } from '../../api.js';
+import CostRates from './CostRates.jsx';
 
 const TYPES = [
   ['footing', 'Footing', ['length_m', 'width_m', 'height_m'], { height_m: 'depth (m)' }],
@@ -96,7 +97,7 @@ export default function Design({ pid, data, reload }) {
         </div>
         <div className="card">
           <h2>Cost estimate</h2>
-          <p className="small muted">Mix design by the ACI 211.1 absolute-volume method; required strength margin per ACI 318. Materials only.</p>
+          <p className="small muted">Mix design by the ACI 211.1 absolute-volume method; required strength margin per ACI 318. This is the materials budget; labour, equipment and overheads are added below.</p>
           <div className="row">
             <label className="field">Contingency %<input type="number" min={0} max={50} value={contingency} onChange={(e) => setContingency(e.target.value)} /></label>
             <button className="primary" style={{ alignSelf: 'end' }} onClick={runEstimate} disabled={!elements.length}>Create estimate</button>
@@ -104,6 +105,8 @@ export default function Design({ pid, data, reload }) {
           {shown && <div style={{ marginTop: 12 }}><div className="small muted">Active budget</div><div style={{ fontSize: 26, fontWeight: 650 }}>{pkr(shown.total_pkr)}</div><div className="tiny">{pkrFull(shown.total_pkr)} incl. {shown.contingency_pct}% contingency</div></div>}
         </div>
       </div>
+
+      <CostRates pid={pid} reload={reload} />
 
       {shown && (
         <div className="card" style={{ marginTop: 16 }}>

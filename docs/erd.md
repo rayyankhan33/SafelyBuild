@@ -55,6 +55,19 @@ erDiagram
     uuid created_by FK
     timestamp_with_time_zone created_at
   }
+  cost_rate_equipment {
+    uuid project_id PK
+    text equipment_type PK
+    numeric rate_pkr
+    integer planned_units
+  }
+  cost_rates {
+    uuid project_id PK
+    numeric crew_rate_pkr
+    numeric overhead_pct
+    uuid set_by FK
+    timestamp_with_time_zone set_at
+  }
   daily_logs {
     uuid id PK
     uuid project_id FK
@@ -291,6 +304,9 @@ erDiagram
     date planned_start
     date planned_end
     numeric planned_cost_pkr
+    numeric planned_labour_pkr
+    numeric planned_equipment_pkr
+    numeric planned_overhead_pkr
   }
   stage_observations {
     uuid id PK
@@ -368,6 +384,9 @@ erDiagram
   users |o--o{ cameras : "created_by"
   projects ||--o{ cost_estimates : "project_id"
   users |o--o{ cost_estimates : "created_by"
+  projects ||--o{ cost_rate_equipment : "project_id"
+  projects ||--o{ cost_rates : "project_id"
+  users |o--o{ cost_rates : "set_by"
   projects ||--o{ daily_logs : "project_id"
   users |o--o{ daily_logs : "author_id"
   users |o--o{ daily_logs : "site_status_by"

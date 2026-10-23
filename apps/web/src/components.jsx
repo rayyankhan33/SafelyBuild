@@ -140,7 +140,7 @@ export function ProgressChart({ series, bac }) {
 export function DailySpendChart({ series }) {
   const data = series.actual.map((a) => ({ date: a.date, spend: a.daily_spend }));
   return (
-    <ChartCard title="Daily spend on materials" subtitle="Money spent on materials each day logged on site." height={220}
+    <ChartCard title="Daily spend" subtitle="Money spent each day logged on site." height={220}
       rows={data} columns={[{ key: 'date', label: 'Date', fmt: dateText }, { key: 'spend', label: 'Spent', num: true, fmt: pkrFull }]}>
       <ResponsiveContainer>
         <BarChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>

@@ -1,0 +1,17 @@
+{
+  "name": "yard_seg",
+  "base": "yolo11n-seg (COCO-pretrained, Ultralytics)",
+  "classes": [
+    "cement_bags",
+    "sand_pile",
+    "aggregate_pile",
+    "brick_stack",
+    "rebar_bundle"
+  ],
+  "trained_on": "synthetic yard scenes (synth/yard.py); NOT real photographs",
+  "epochs": 15,
+  "imgsz": 352,
+  "train_fraction": 0.4,
+  "train_seconds": 4797,
+  "weights_sha256": "a774caa7938aa4299a14f10cff9987cab056c544b0069c402529b5bb9cf761f8"
+}
