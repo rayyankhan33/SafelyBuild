@@ -43,11 +43,11 @@ function rng(seed) {
 }
 
 const YARD_SCALE = 0.1; // metres per pixel of the yard camera
-const EQUIPMENT = [{ type: 'Concrete mixer', count: 2 }, { type: 'Poker vibrator', count: 3 }, { type: 'Tower crane', count: 1 }];
+const EQUIPMENT = [{ type: 'Concrete mixer', count: 2 }, { type: 'Poker vibrator', count: 3 }, { type: 'Tower crane', count: 1 }, { type: 'Formwork set', count: 4 }];
 // Indicative demo rates (PKR), entered once by the engineer at inception and then locked.
 export const DEMO_COST_RATES = {
   crew_rate_pkr: 60_000, overhead_pct: 8,
-  equipment: [{ type: 'Concrete mixer', rate_pkr: 4000, planned_units: 2 }, { type: 'Poker vibrator', rate_pkr: 1500, planned_units: 3 }, { type: 'Tower crane', rate_pkr: 25_000, planned_units: 1 }],
+  equipment: [{ type: 'Concrete mixer', rate_pkr: 4000, planned_units: 2 }, { type: 'Poker vibrator', rate_pkr: 1500, planned_units: 3 }, { type: 'Tower crane', rate_pkr: 25_000, planned_units: 1 }, { type: 'Formwork set', rate_pkr: 2500, planned_units: 4 }],
 };
 
 // Inspection-camera scenario, by working-day index from project start. 'bad' frames are REAL sample

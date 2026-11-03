@@ -52,9 +52,10 @@ export default function CostRates({ pid, reload }) {
             <label className="field">Site overheads (% of direct cost)<input type="number" required min={0} max={100} step="any" value={form.overhead_pct} onChange={(e) => setForm({ ...form, overhead_pct: e.target.value })} /></label>
           </div>
           <h3>Equipment hire</h3>
+          <p className="tiny muted" style={{ marginTop: 0 }}>Include formwork here as hire (for example a "Formwork set" with its daily hire rate and the planned number of sets). Each type is then costed from your daily equipment log.</p>
           {form.equipment.map((x, i) => (
             <div className="row" key={i} style={{ marginBottom: 8 }}>
-              <label className="field">Type<input value={x.type} placeholder="e.g. Concrete mixer" onChange={(e) => setEq(i, 'type', e.target.value)} /></label>
+              <label className="field">Type<input value={x.type} placeholder="e.g. Concrete mixer, Formwork set" onChange={(e) => setEq(i, 'type', e.target.value)} /></label>
               <label className="field">Hire per unit per day (PKR)<input type="number" min={0} step="any" value={x.rate_pkr} onChange={(e) => setEq(i, 'rate_pkr', e.target.value)} /></label>
               <label className="field">Planned units<input type="number" min={0} step={1} value={x.planned_units} onChange={(e) => setEq(i, 'planned_units', e.target.value)} /></label>
               {form.equipment.length > 1 && <button type="button" className="link" style={{ alignSelf: 'end' }} onClick={() => setForm({ ...form, equipment: form.equipment.filter((_, j) => j !== i) })}>Remove</button>}

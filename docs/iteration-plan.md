@@ -74,7 +74,7 @@ Sprint 2 goal: real footage and measured accuracy, plus total cost and the compl
 
 | Item | Decision needed |
 |---|---|
-| Formwork costing (rest of D1) | You did not select it when asked; say if it should be built (area from the BOQ x a rate per m2) |
+| ~~Formwork costing (rest of D1)~~ | **Decided 2026-11-03: costed as equipment hire** (a "formwork set" with a daily hire rate); area-based costing from the BOQ is not built and not planned |
 | 23. Change control with administrator + investor approval (D3, FR-37) | Sprint 3 in the plan; also the only way to add a missing equipment rate or correct a locked rate |
 | Crew-count cross-check against camera worker counts (FR-38) | Sprint 3; needs a worker-counting model |
 | Remove the temporary test-footage tool | When real cameras are connected (checklist in `temporary-features.md`) |

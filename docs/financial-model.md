@@ -78,7 +78,8 @@ Decisions D1 and D2, built as agreed:
 - **Baseline:** when the schedule is generated, each task's budget becomes materials + labour (planned crews x rate x working days) + equipment (planned units x rate x working days) + overheads. The total is what earned value uses, so CPI, EAC and the investor figures cover the whole cost. Regenerate the schedule after setting the rates.
 - **Without rates** a project stays materials-only and says so in plain words on the investor pages.
 - **Equipment with no rate** is not costed and the engineer sees a warning (rates cannot be added later without change control).
-- **Not built:** formwork (area from the BOQ), a cross-check of the logged crews against worker counts from the cameras (FR-38), and rates for trades.
+- **Formwork** is costed as equipment hire (decision 2026-11-03): the engineer adds a "formwork set" equipment type with a daily hire rate per set and the planned number of sets; it then accrues from the daily equipment log like any other equipment. This avoids inventing an "actual" formwork cost that no camera can measure. Area-based costing from the BOQ is **not built** (contact area is computable per element, but its actual cost would have to be accrued with progress, which cannot show an overrun).
+- **Not built:** a cross-check of the logged crews against worker counts from the cameras (FR-38), and rates for trades.
 - **Limit to state in the report:** crews and equipment per day are the engineer's own log, not image evidence, so labour and equipment cost are *reported* costs. The materials cost, which is the large and manipulable one, stays camera-measured.
 
 ## 7. Robustness added in sprint 2
@@ -92,4 +93,4 @@ Decisions D1 and D2, built as agreed:
 1. Get real yard photographs with known quantities (a measured delivery, a counted bag stack) and run `evaluate_yard.py`-style measurement on them. Everything above is provisional until then.
 2. Train the final model on a GPU with all the data at 640 px, and add real labelled frames to the synthetic set.
 3. Decide whether a missed stack should be handled (for example, ignore an end-of-day drop of more than a stack when the start-of-day frame is clean).
-4. Add formwork and the crew cross-check if the report needs full D1 coverage.
+4. Add the crew cross-check if the report needs it, and area-based formwork costing only if quantity take-off of formwork becomes a requirement.
