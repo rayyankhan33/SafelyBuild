@@ -27,6 +27,7 @@ export function startFakeInference() {
     mode: 'ok', calls: [], findings: [], stage: 0, fraction: null, items: [],
     // test-footage job: `script` is the list of job views served in order (the last one repeats)
     footage: { script: [], idx: 0, starts: [], deleted: [], rejectStart: null, gone: false },
+    healthFlags: [], healthCalls: 0,   // camera tamper screening: flags returned for every frame
   };
   const server = http.createServer((req, res) => {
     const chunks = [];
@@ -36,6 +37,7 @@ export function startFakeInference() {
       const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
       if (state.mode === 'down') return req.socket.destroy();
       if (state.mode === 'error') return send(500, { detail: 'model crashed' });
+      if (req.url.startsWith('/v1/health')) { state.healthCalls += 1; return send(200, { metrics: { refs: 0 }, flags: state.healthFlags }); }
       if (req.url.startsWith('/v1/test/')) {
         const f = state.footage;
         const m = req.url.match(/^\/v1\/test\/jobs\/([^/]+)(?:\/frames\/(\d+)\.jpg)?$/);

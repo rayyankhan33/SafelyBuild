@@ -317,4 +317,4 @@ Known gaps: no HTTPS termination (deployment), in-memory login limiter (single p
 | May read | Technical status, risk and hazard detail, evidence health, price book (read-only) | Everything about system health; BOQ and schedule read-only; audit log | Plain-language figures only (no ratings, codes or controls) |
 | Refused | Cameras, prices, people, audit log | BOQ, estimate, schedule, crews, warnings, test footage, creating projects | Every write; price book, cameras, BOQ |
 
-**Open risk.** A camera can still be physically obstructed or pointed away. Not detected yet; planned as a frame-change and scene-consistency check.
+**Camera screening.** A covered, out-of-focus or redirected camera is detected from the frames themselves (FR-45) and its frames stop being analysed; thresholds are uncalibrated. **Open risk.** A camera that is obstructed or moved but still shows a plausible scene, or tampering that evolves slowly enough to look like normal change, is not detected.

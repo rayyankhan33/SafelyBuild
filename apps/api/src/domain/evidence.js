@@ -7,7 +7,25 @@ import { addDays, diffDays, workingDaysInclusive } from './dates.js';
 export const STALE_AFTER_DAYS = 2;
 
 /**
- * @param {object[]} cameras   {id, name, kind, element_id, active, last_frame_date|null}
+ * Screening flags need to repeat before a camera is suspected: one flagged frame may be a worker in front of the lens or
+ * a lighting change. Covered and blurred are clear-cut (2 in a row); a different view could be a genuine scene change (3).
+ * Recovery is automatic: clean frames after the fault clear the suspicion (a moved camera is judged against its new view
+ * once it has sent a few frames from it). Values are uncalibrated (see services/inference/health.py).
+ */
+export const TAMPER_CONSECUTIVE = { covered: 2, blurred: 2, redirected: 3 };
+export const TAMPER_TEXT = { covered: 'covered or blacked out', blurred: 'out of focus', redirected: 'pointing at a different view' };
+
+/** @param {string[][]} recentFlags flags of the camera's latest checks, newest first. Returns the suspected fault or null. */
+export function tamperSuspicion(recentFlags) {
+  for (const f of ['covered', 'blurred', 'redirected']) {
+    const n = TAMPER_CONSECUTIVE[f];
+    if (recentFlags.length >= n && recentFlags.slice(0, n).every((x) => x.includes(f))) return f;
+  }
+  return null;
+}
+
+/**
+ * @param {object[]} cameras   {id, name, kind, element_id, active, last_frame_date|null, recent_flags?: string[][]}
  * @param {Record<string, boolean>} taskActiveByElement true while the element's task is in progress or due
  * @param {string} asOf        status date
  * @returns {{id, name, kind, status: 'ok'|'stale'|'never'|'idle'|'disabled', days_since: number|null}[]}
@@ -20,7 +38,8 @@ export function cameraHealth(cameras, taskActiveByElement, asOf) {
     else if (c.kind === 'zone' && !taskActiveByElement[c.element_id]) status = 'idle'; // task not in progress: no frames expected
     else if (days === null) status = 'never';
     else status = days >= STALE_AFTER_DAYS ? 'stale' : 'ok';
-    return { id: c.id, name: c.name, kind: c.kind, status, days_since: days };
+    const tamper = ['ok', 'stale', 'never'].includes(status) ? tamperSuspicion(c.recent_flags ?? []) : null;
+    return { id: c.id, name: c.name, kind: c.kind, status: tamper ? 'suspect' : status, days_since: days, tamper };
   });
 }
 
@@ -32,9 +51,11 @@ export function uncoveredTasks(tasks, cameras) {
 
 export function evidenceSummary(health, uncovered) {
   const quiet = health.filter((h) => h.status === 'stale' || h.status === 'never');
+  const suspect = health.filter((h) => h.status === 'suspect');
   return {
-    gap: quiet.length > 0 || uncovered.length > 0,
+    gap: quiet.length > 0 || uncovered.length > 0 || suspect.length > 0,
     quiet_cameras: quiet.map((h) => h.name),
+    suspect_cameras: suspect.map((h) => ({ name: h.name, tamper: h.tamper })),
     uncovered_tasks: uncovered.map((t) => t.name),
   };
 }

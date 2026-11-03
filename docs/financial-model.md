@@ -81,7 +81,13 @@ Decisions D1 and D2, built as agreed:
 - **Not built:** formwork (area from the BOQ), a cross-check of the logged crews against worker counts from the cameras (FR-38), and rates for trades.
 - **Limit to state in the report:** crews and equipment per day are the engineer's own log, not image evidence, so labour and equipment cost are *reported* costs. The materials cost, which is the large and manipulable one, stays camera-measured.
 
-## 7. What to do next
+## 7. Robustness added in sprint 2
+
+- **A missed stack is not charged as consumption (FR-46).** A drop of more than half a material's start-of-day stock is held: it is costed only if the next day's stock stays low, ignored if the stock returns to its earlier level (the model missed the stack), and pending on the latest day. A rejected drop is not read as a delivery either. The engineer's Overview lists the days that were not costed.
+- **A covered or moved yard camera cannot read as "stock gone" (FR-45).** Frames from a camera flagged covered, blurred or redirected are stored but not analysed.
+- **Setting the rates rebuilds the baseline.** When the lead engineer saves the cost rates and a schedule already exists with no recorded progress, the schedule is regenerated with the same planned crews so the budget includes labour, equipment and overheads at once. If progress already exists the engineer is told to regenerate it manually (this erases the progress).
+
+## 8. What to do next
 
 1. Get real yard photographs with known quantities (a measured delivery, a counted bag stack) and run `evaluate_yard.py`-style measurement on them. Everything above is provisional until then.
 2. Train the final model on a GPU with all the data at 640 px, and add real labelled frames to the synthetic set.

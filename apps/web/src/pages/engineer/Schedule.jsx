@@ -21,6 +21,7 @@ export default function Schedule({ pid, data, reload }) {
   }
 
   const sched = data.headline?.schedule;
+  const life = Object.fromEntries((data.lifecycle ?? []).map((l) => [l.task_id, l]));
   return (
     <>
       <div className="card">
@@ -35,15 +36,23 @@ export default function Schedule({ pid, data, reload }) {
       </div>
       <div className="card table-wrap" style={{ marginTop: 16 }}>
         <table>
-          <thead><tr><th>#</th><th>Task</th><th>Planned start</th><th>Planned end</th><th className="num">Budget</th><th style={{ minWidth: 160 }}>Progress</th></tr></thead>
+          <thead><tr><th>#</th><th>Task</th><th>Planned start</th><th>Planned end</th><th className="num">Budget</th><th style={{ minWidth: 160 }}>Progress</th><th style={{ minWidth: 240 }}>Completion lifecycle</th></tr></thead>
           <tbody>
             {tasks.map((t) => (
               <tr key={t.id}>
                 <td>{t.seq}</td><td>{t.name}</td><td>{dateText(t.planned_start)}</td><td>{dateText(t.planned_end)}</td><td className="num">{pkr(t.planned_cost_pkr)}</td>
                 <td><div className="bar"><div style={{ width: `${t.percent_complete}%` }} /></div><span className="tiny">{Math.round(t.percent_complete)}%</span></td>
+                <td>
+                  {life[t.id] && life[t.id].state !== 'not_placed' && (
+                    <>
+                      <div className="small"><b>{life[t.id].status}</b></div>
+                      {life[t.id].warnings.map((w) => <div key={w.step} className="tiny" style={{ color: 'var(--warning-text, var(--ink-2))' }}>! {w.text}</div>)}
+                    </>
+                  )}
+                </td>
               </tr>
             ))}
-            {!tasks.length && <tr><td colSpan={6} className="muted">No schedule yet. Create an estimate first, then generate.</td></tr>}
+            {!tasks.length && <tr><td colSpan={7} className="muted">No schedule yet. Create an estimate first, then generate.</td></tr>}
           </tbody>
         </table>
       </div>

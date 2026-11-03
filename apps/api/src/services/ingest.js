@@ -16,7 +16,7 @@ import * as storage from '../storage.js';
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 // ------------------------------------------------------------------ cameras
-export async function createCamera(db, project, user, { name, kind, element_id, scale_m_per_px, expected_frames_per_day, detect_defects = true }) {
+export async function createCamera(db, project, user, { name, kind, element_id, scale_m_per_px, expected_frames_per_day, detect_defects = true, check_tamper = true }) {
   if (kind === 'zone') {
     if (!element_id) throw bad('a zone camera must watch one design element');
     const el = (await db.query('SELECT 1 FROM design_elements WHERE id = $1 AND project_id = $2', [element_id, project.id])).rowCount;
@@ -25,9 +25,9 @@ export async function createCamera(db, project, user, { name, kind, element_id, 
   if (kind === 'yard' && !(scale_m_per_px > 0)) throw bad('a yard camera needs a calibrated ground scale (metres per pixel)');
   const secret = crypto.randomBytes(24).toString('hex');
   const { rows } = await db.query(
-    `INSERT INTO cameras (project_id, name, kind, element_id, scale_m_per_px, key_hash, expected_frames_per_day, detect_defects, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, project_id, name, kind, element_id, scale_m_per_px, expected_frames_per_day, detect_defects, active, created_at`,
-    [project.id, name, kind, kind === 'zone' ? element_id : null, kind === 'yard' ? scale_m_per_px : null, sha256(secret), expected_frames_per_day ?? 1, detect_defects, user.id]);
+    `INSERT INTO cameras (project_id, name, kind, element_id, scale_m_per_px, key_hash, expected_frames_per_day, detect_defects, check_tamper, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, project_id, name, kind, element_id, scale_m_per_px, expected_frames_per_day, detect_defects, check_tamper, active, created_at`,
+    [project.id, name, kind, kind === 'zone' ? element_id : null, kind === 'yard' ? scale_m_per_px : null, sha256(secret), expected_frames_per_day ?? 1, detect_defects, check_tamper, user.id]);
   // the secret is shown exactly once; only its hash is stored
   return { camera: rows[0], key: `${rows[0].id}.${secret}` };
 }
@@ -84,15 +84,40 @@ export async function ingestFrame(db, camera, { buffer, capturedAt, backfill = f
   }
   await db.query('UPDATE cameras SET last_frame_at = GREATEST(COALESCE(last_frame_at, $2), $2) WHERE id = $1', [camera.id, capturedAt]);
 
+  // Is the camera still looking at its scene? A frame from a covered, defocused or redirected camera is stored but NOT
+  // analysed: a black frame would read as "no stock left" and be charged as consumption.
+  const health = camera.check_tamper ? await runHealth(db, camera, media, buffer) : null;
   const analysis = {};
-  if (camera.detect_defects) analysis.defects = await runDefects(db, project, media, buffer, date);
-  if (camera.kind === 'zone') analysis.stage = await runStage(db, camera, media, buffer, date);
-  if (camera.kind === 'yard') analysis.inventory = await runInventory(db, camera, media, buffer, date);
-  if (camera.kind === 'overview') analysis.activity = await runActivity(db, camera, media, buffer);
+  if (health?.flags?.length) {
+    analysis.skipped = { status: 'skipped', reason: `frame not analysed: camera screening flagged ${health.flags.join(', ')}` };
+  } else {
+    if (camera.detect_defects) analysis.defects = await runDefects(db, project, media, buffer, date);
+    if (camera.kind === 'zone') analysis.stage = await runStage(db, camera, media, buffer, date);
+    if (camera.kind === 'yard') analysis.inventory = await runInventory(db, camera, media, buffer, date);
+    if (camera.kind === 'overview') analysis.activity = await runActivity(db, camera, media, buffer);
+  }
 
   const failure = Object.values(analysis).find((a) => a.status === 'failed');
   await syncSystemAlert(db, project.id, failure?.error ?? null);
-  return { media_id: media.id, date, analysis };
+  return { media_id: media.id, date, analysis, health: health ? { flags: health.flags } : null };
+}
+
+
+const HEALTH_REFERENCES = 4;
+/** Screen the frame against this camera's recent frames and record the result. A failure of the screening itself never blocks ingest. */
+async function runHealth(db, camera, media, buffer) {
+  try {
+    const prev = (await db.query(
+      `SELECT storage_key, content_type FROM media WHERE camera_id = $1 AND id <> $2 AND captured_at < $3 ORDER BY captured_at DESC LIMIT $4`,
+      [camera.id, media.id, media.captured_at, HEALTH_REFERENCES])).rows;
+    const refs = [];
+    for (const p of prev) refs.push({ buffer: await storage.read(p.storage_key), contentType: p.content_type });
+    const r = await inference.analyseHealth(buffer, media.content_type, refs);
+    await db.query('INSERT INTO camera_health_checks (camera_id, media_id, metrics, flags) VALUES ($1,$2,$3,$4)', [camera.id, media.id, r.metrics ?? {}, r.flags ?? []]);
+    return { flags: r.flags ?? [] };
+  } catch {
+    return null;
+  }
 }
 
 async function startRun(db, mediaId, kind) {

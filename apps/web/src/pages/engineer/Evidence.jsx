@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { api, dateText } from '../../api.js';
 import { AuthImage } from '../../components.jsx';
 
-const STATUS = { ok: ['good', '✓', 'Reporting'], stale: ['critical', '✕', 'Overdue'], never: ['critical', '✕', 'Never reported'], idle: ['neutral', '–', 'Not needed now'], disabled: ['neutral', '–', 'Disabled'] };
+const STATUS = { suspect: ['critical', '✕', 'Suspected fault'], ok: ['good', '✓', 'Reporting'], stale: ['critical', '✕', 'Overdue'], never: ['critical', '✕', 'Never reported'], idle: ['neutral', '–', 'Not needed now'], disabled: ['neutral', '–', 'Disabled'] };
+const TAMPER = { covered: 'covered or blacked out', blurred: 'out of focus', redirected: 'pointing at a different view' };
 const KIND = { zone: 'Zone (one element)', yard: 'Material yard', overview: 'Inspection / overview' };
 
 export default function Evidence({ data, pid }) {
@@ -33,7 +34,7 @@ export default function Evidence({ data, pid }) {
               return (
                 <tr key={c.id}>
                   <td>{c.name}</td><td>{KIND[c.kind]}</td><td>{c.element_label ?? (c.scale_m_per_px ? `scale ${c.scale_m_per_px} m/px` : '—')}</td>
-                  <td><span className={`badge s-${tone}`}><i>{icon}</i>{label}</span></td>
+                  <td><span className={`badge s-${tone}`}><i>{icon}</i>{label}</span>{h?.tamper && <div className="tiny err">Appears {TAMPER[h.tamper]}: frames stored, not analysed</div>}</td>
                   <td>{c.last_frame_at ? new Date(c.last_frame_at).toLocaleString('en-GB') : '—'}</td><td className="num">{c.frames}</td>
                 </tr>
               );

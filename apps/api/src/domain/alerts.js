@@ -3,6 +3,7 @@
 // condition produces exactly one open alert no matter how often the numbers are recomputed.
 
 import { budgetText, scheduleText } from './narrative.js';
+import { TAMPER_TEXT } from './evidence.js';
 
 export function desiredAlerts({ budget, schedule, safety, sdi, evidence }) {
   const out = [];
@@ -39,6 +40,13 @@ export function desiredAlerts({ budget, schedule, safety, sdi, evidence }) {
       kind: 'system', level: 'warning', dedupe_key: 'evidence:cameras',
       technical_msg: `No recent frames from: ${evidence.quiet_cameras.join(', ')}. Progress, stock and defects for these areas are not being verified.`,
       plain_msg: 'Some site cameras have not reported recently, so current conditions in those areas are not verified.',
+    });
+  }
+  if (evidence?.suspect_cameras?.length) {
+    out.push({
+      kind: 'system', level: 'critical', dedupe_key: 'evidence:tamper',
+      technical_msg: `Camera screening suspects: ${evidence.suspect_cameras.map((c) => `${c.name} ${TAMPER_TEXT[c.tamper]}`).join('; ')}. Its frames are stored but not analysed; progress, stock and defects for that area are not verified until the view is restored.`,
+      plain_msg: 'A site camera appears to be blocked, out of focus or moved, so conditions in its area are not verified until it is fixed.',
     });
   }
   if (evidence?.uncovered_tasks?.length) {

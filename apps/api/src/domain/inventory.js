@@ -47,26 +47,46 @@ export function dailyStock(frames) {
   return { start, end };
 }
 
+// A single frame can miss a whole stack (the model fails to see it) or see one that is not there. A stack that
+// disappears for one frame would look like a huge consumption and be charged to the project. So a large
+// one-day drop is only believed when the next day agrees with it:
+//   - the next day's start stock is still low        -> the drop was real, cost it
+//   - the next day's start stock is back at today's start (within REBOUND_TOLERANCE) -> it was a missed stack, cost nothing
+//   - there is no next day yet                        -> pending, cost nothing until the next day's frames arrive
+// Limitation (documented): real heavy use followed by a delivery that happens to restore exactly the previous level is
+// read as a missed stack.
+export const LARGE_DROP = 0.5;
+export const REBOUND_TOLERANCE = 0.1;
+
 /**
  * Replay all days. `days` sorted by date: [{date, start: {code: qty}, end: {code: qty}}].
- * @returns {{date, material_code, start, end, used, delivered}[]}
+ * @returns {{date, material_code, start, end, used, delivered, note: string|null}[]}
+ *   note is 'pending_confirmation' or 'rejected_drop' when a large drop was not costed.
  */
 export function inventoryHistory(days, minDeliveryByCode = {}) {
   const prevEnd = {};
   const out = [];
-  for (const { date, start, end } of days) {
+  days.forEach(({ date, start, end }, i) => {
     for (const code of Object.keys(end)) {
       const s = start[code] ?? end[code];
       const e = end[code];
-      const used = s - e > s * DEADBAND ? s - e : 0;
+      let used = s - e > s * DEADBAND ? s - e : 0;
+      let note = null;
+      let effectiveEnd = e;
+      if (used > s * LARGE_DROP) {
+        const next = days[i + 1];
+        const ns = next ? (next.start[code] ?? next.end[code]) : undefined;
+        if (ns === undefined) { used = 0; note = 'pending_confirmation'; effectiveEnd = s; }
+        else if (Math.abs(ns - s) <= s * REBOUND_TOLERANCE) { used = 0; note = 'rejected_drop'; effectiveEnd = s; }
+      }
       let delivered = 0;
       if (prevEnd[code] !== undefined) {
         const rise = s - prevEnd[code];
         if (rise > Math.max(prevEnd[code] * DELIVERY_FRACTION, minDeliveryByCode[code] ?? 0)) delivered = rise;
       }
-      out.push({ date, material_code: code, start: s, end: e, used, delivered });
-      prevEnd[code] = e;
+      out.push({ date, material_code: code, start: s, end: e, used, delivered, note });
+      prevEnd[code] = effectiveEnd;
     }
-  }
+  });
   return out;
 }

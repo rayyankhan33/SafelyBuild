@@ -159,7 +159,23 @@ const costRatesSchema = z.object({
 router.post('/projects/:pid/cost-rates', eng, wrap(async (req, res) => {
   const rates = await setCostRates(pool, req.project, req.user, parse(costRatesSchema, req.body ?? {}));
   await audit(pool, req, 'create', 'cost_rates', req.project.id, { crew_rate_pkr: rates.crew_rate_pkr, overhead_pct: rates.overhead_pct, equipment: rates.equipment.length });
-  res.status(201).json({ rates, note: 'Rates are now locked. Regenerate the schedule so the baseline budget includes labour, equipment and overheads.' });
+  // the baseline budget must include the new costs: rebuild it now when that erases nothing, otherwise say what to do
+  let note = 'Rates are now locked.';
+  const hasSchedule = (await pool.query('SELECT 1 FROM schedule_tasks WHERE project_id = $1 LIMIT 1', [req.project.id])).rowCount > 0;
+  if (hasSchedule) {
+    try {
+      const fresh = (await pool.query('SELECT * FROM projects WHERE id = $1', [req.project.id])).rows[0];
+      await generateProjectSchedule(pool, fresh, { crews: fresh.planned_crews ?? undefined });
+      await audit(pool, req, 'generate', 'schedule', null, { reason: 'cost rates set', crews: fresh.planned_crews ?? 1 });
+      await recompute(pool, fresh, today());
+      note += ' The baseline schedule was rebuilt so its budget includes labour, equipment and overheads.';
+    } catch (e) {
+      note += e.code === 'would_erase_progress'
+        ? ' Progress is already recorded, so the schedule was not rebuilt automatically: regenerate it on the Schedule tab to include these costs (this erases recorded progress).'
+        : ' Regenerate the schedule so the baseline budget includes these costs.';
+    }
+  } else note += ' Generate the schedule so the baseline budget includes labour, equipment and overheads.';
+  res.status(201).json({ rates, note });
 }));
 router.get('/projects/:pid/cost-rates', staff, wrap(async (req, res) => res.json({ rates: await getCostRates(pool, req.project.id) })));
 
@@ -191,7 +207,7 @@ router.get('/projects/:pid/site-status', staff, wrap(async (req, res) => res.jso
 const cameraSchema = z.object({
   name: z.string().min(2).max(80), kind: z.enum(['zone', 'yard', 'overview']),
   element_id: uuid.optional(), scale_m_per_px: z.number().positive().max(10).optional(),
-  expected_frames_per_day: z.number().int().min(1).max(1000).optional(), detect_defects: z.boolean().optional(),
+  expected_frames_per_day: z.number().int().min(1).max(1000).optional(), detect_defects: z.boolean().optional(), check_tamper: z.boolean().optional(),
 });
 router.get('/projects/:pid/cameras', staff, wrap(async (req, res) => res.json({ cameras: await listCameras(pool, req.project.id) })));
 router.post('/projects/:pid/cameras', adminOnly, read, wrap(async (req, res) => {

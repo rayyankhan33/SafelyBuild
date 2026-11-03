@@ -54,6 +54,14 @@ export function analyseInventory(buf, contentType, scaleMPerPx) {
   return call('/v1/inventory', f, `?scale_m_per_px=${encodeURIComponent(scaleMPerPx)}`);
 }
 
+/** Tamper and fault screening of one frame against earlier frames of the same camera (newest first). */
+export function analyseHealth(buf, contentType, refs = []) {
+  const f = new FormData();
+  f.append('image', blob(buf, contentType), 'frame');
+  for (const r of refs) f.append('refs', blob(r.buffer, r.contentType), 'ref');
+  return call('/v1/health', f);
+}
+
 export async function inferenceHealth() {
   try {
     const res = await fetch(`${config.inferenceUrl}/health`, { signal: AbortSignal.timeout(3000) });

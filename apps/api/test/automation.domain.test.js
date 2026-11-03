@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { STAGE_PLAN, confirmedValue, percentForStage, percentOnDate, progressHistory, stageAtProgress, stageLabel } from '../src/domain/stages.js';
 import { dailyStock, inventoryHistory } from '../src/domain/inventory.js';
 import { CLEAN_DAYS_TO_CLOSE, deriveHazards } from '../src/domain/risk.js';
-import { cameraHealth, evidenceSummary, uncoveredTasks } from '../src/domain/evidence.js';
+import { cameraHealth, evidenceSummary, tamperSuspicion, uncoveredTasks } from '../src/domain/evidence.js';
 import { desiredAlerts } from '../src/domain/alerts.js';
 
 // ------------------------------------------------------------------ stages (TC-STG)
@@ -126,6 +126,59 @@ test('materials are tracked independently', () => {
   const h = inventoryHistory([{ date: '2026-10-05', start: { SAND: 100, BRICK: 5000 }, end: { SAND: 80, BRICK: 5000 } }]);
   assert.equal(h.find((x) => x.material_code === 'SAND').used, 20);
   assert.equal(h.find((x) => x.material_code === 'BRICK').used, 0);
+});
+
+// ---- a stack the model misses must not be charged as consumption (TC-INV-DROP)
+const day = (date, start, end) => ({ date, start: { SAND: start }, end: { SAND: end ?? start } });
+test('a large drop is costed once the next day confirms stock stayed low', () => {
+  const h = inventoryHistory([day('2026-10-05', 100, 30), day('2026-10-06', 30, 25)]);
+  assert.equal(h[0].used, 70); assert.equal(h[0].note, null);
+});
+test('a large drop that reverses the next day was a missed stack: nothing is costed and it is not a delivery either', () => {
+  const h = inventoryHistory([day('2026-10-05', 100, 5), day('2026-10-06', 98, 90)]);
+  assert.equal(h[0].used, 0); assert.equal(h[0].note, 'rejected_drop');
+  assert.equal(h[1].delivered, 0);                     // 5 -> 98 is not a delivery: the stock was never really 5
+  assert.equal(h[1].used, 8);                          // the next day is judged on its own
+});
+test('a large drop on the latest day waits for the next day before it is costed', () => {
+  const h = inventoryHistory([day('2026-10-05', 100, 20)]);
+  assert.equal(h[0].used, 0); assert.equal(h[0].note, 'pending_confirmation');
+});
+test('heavy use followed by a real delivery is still costed (the stock does not return to the old level)', () => {
+  const h = inventoryHistory([day('2026-10-05', 100, 30), day('2026-10-06', 300, 280)], { SAND: 3 });
+  assert.equal(h[0].used, 70); assert.equal(h[1].delivered, 270);
+});
+test('ordinary days (drops under 50 %) are never held back', () => {
+  const h = inventoryHistory([day('2026-10-05', 100, 60)]);
+  assert.equal(h[0].used, 40); assert.equal(h[0].note, null);
+});
+
+// ---- camera tamper suspicion (TC-EVD-TAMPER)
+test('a flag must repeat before a camera is suspected: covered and blurred twice, redirected three times', () => {
+  assert.equal(tamperSuspicion([['covered']]), null);
+  assert.equal(tamperSuspicion([['covered'], ['covered']]), 'covered');
+  assert.equal(tamperSuspicion([['blurred'], ['blurred'], []]), 'blurred');
+  assert.equal(tamperSuspicion([['redirected'], ['redirected']]), null);
+  assert.equal(tamperSuspicion([['redirected'], ['redirected'], ['redirected']]), 'redirected');
+});
+test('one clean frame (the newest) ends the suspicion; a mixed run does not count', () => {
+  assert.equal(tamperSuspicion([[], ['covered'], ['covered']]), null);
+  assert.equal(tamperSuspicion([['covered'], [], ['covered']]), null);
+  assert.equal(tamperSuspicion([]), null);
+});
+test('a suspect camera is not "ok": it opens an evidence gap and a critical alert in both wordings', () => {
+  const cams = [{ id: 'c1', name: 'Gate', kind: 'overview', element_id: null, active: true, last_frame_date: '2026-10-06', recent_flags: [['covered'], ['covered']] }];
+  const health = cameraHealth(cams, {}, '2026-10-06');
+  assert.equal(health[0].status, 'suspect'); assert.equal(health[0].tamper, 'covered');
+  const summary = evidenceSummary(health, []);
+  assert.equal(summary.gap, true); assert.deepEqual(summary.suspect_cameras, [{ name: 'Gate', tamper: 'covered' }]);
+  const a = desiredAlerts({ budget: { status: 'on_track' }, schedule: { status: 'on_track' }, safety: { status: 'low' }, sdi: null, evidence: summary }).find((x) => x.dedupe_key === 'evidence:tamper');
+  assert.equal(a.level, 'critical'); assert.match(a.technical_msg, /Gate covered or blacked out/); assert.doesNotMatch(a.plain_msg, /Gate|screening/);
+});
+test('disabled or idle cameras are never suspected', () => {
+  const flags = [['covered'], ['covered']];
+  assert.equal(cameraHealth([{ id: 'a', name: 'A', kind: 'overview', active: false, last_frame_date: '2026-10-06', recent_flags: flags }], {}, '2026-10-06')[0].status, 'disabled');
+  assert.equal(cameraHealth([{ id: 'b', name: 'B', kind: 'zone', element_id: 'e', active: true, last_frame_date: '2026-10-06', recent_flags: flags }], { e: false }, '2026-10-06')[0].status, 'idle');
 });
 
 // ------------------------------------------------------------------ hazards derived from evidence (TC-HAZ)

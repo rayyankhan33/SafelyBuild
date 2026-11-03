@@ -9,6 +9,7 @@ export default function Progress({ data, pid }) {
   useEffect(() => { if (data.setup_complete) api('GET', `/projects/${pid}/schedule`).then((r) => setTasks(r.tasks)).catch(() => {}); }, [pid, data.setup_complete]);
   if (!data.setup_complete) return <NotReady data={data} />;
   const h = data.headline; const s = h.schedule;
+  const life = Object.fromEntries((data.lifecycle ?? []).map((l) => [l.task_id, l]));
   const late = s.days_late > 0 ? `${s.days_late} days late` : s.days_late < 0 ? `${-s.days_late} days early` : 'on time';
   return (
     <>
@@ -27,13 +28,14 @@ export default function Progress({ data, pid }) {
       <div className="card table-wrap" style={{ marginTop: 16 }}>
         <h2>Work packages</h2>
         <table>
-          <thead><tr><th>Work</th><th>Planned finish</th><th style={{ minWidth: 160 }}>Done</th></tr></thead>
+          <thead><tr><th>Work</th><th>Planned finish</th><th style={{ minWidth: 160 }}>Done</th><th style={{ minWidth: 220 }}>Status</th></tr></thead>
           <tbody>
             {tasks.map((t) => (
               <tr key={t.id}><td>{t.name}</td><td>{dateText(t.planned_end)}</td>
-                <td><div className="bar"><div style={{ width: `${t.percent_complete}%` }} /></div><span className="tiny">{Math.round(t.percent_complete)}%</span></td></tr>
+                <td><div className="bar"><div style={{ width: `${t.percent_complete}%` }} /></div><span className="tiny">{Math.round(t.percent_complete)}%</span></td>
+                <td>{life[t.id] && life[t.id].state !== 'not_placed' ? (<><div className="small">{life[t.id].status}</div>{life[t.id].warnings.map((w) => <div key={w.step} className="tiny muted">{w.text}</div>)}</>) : <span className="tiny muted">{Number(t.percent_complete) > 0 ? 'In progress' : 'Not started'}</span>}</td></tr>
             ))}
-            {!tasks.length && <tr><td colSpan={3} className="muted">No schedule yet.</td></tr>}
+            {!tasks.length && <tr><td colSpan={4} className="muted">No schedule yet.</td></tr>}
           </tbody>
         </table>
       </div>

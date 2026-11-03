@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api.js';
 
-const STATUS = { ok: ['good', '✓', 'Reporting'], stale: ['critical', '✕', 'Overdue'], never: ['critical', '✕', 'Never reported'], idle: ['neutral', '–', 'Not needed now'], disabled: ['neutral', '–', 'Disabled'] };
+const STATUS = { suspect: ['critical', '✕', 'Suspected fault'], ok: ['good', '✓', 'Reporting'], stale: ['critical', '✕', 'Overdue'], never: ['critical', '✕', 'Never reported'], idle: ['neutral', '–', 'Not needed now'], disabled: ['neutral', '–', 'Disabled'] };
+const TAMPER = { covered: 'covered or blacked out', blurred: 'out of focus', redirected: 'pointing at a different view' };
 const KIND = { zone: 'Zone (one element)', yard: 'Material yard', overview: 'Inspection / overview' };
 
 export default function Cameras({ data, pid, reload }) {
   const [cams, setCams] = useState([]);
   const [elements, setElements] = useState([]);
-  const [form, setForm] = useState({ name: '', kind: 'overview', element_id: '', scale_m_per_px: '0.1' });
+  const [form, setForm] = useState({ name: '', kind: 'overview', element_id: '', scale_m_per_px: '0.1', check_tamper: true });
   const [newKey, setNewKey] = useState(null);
   const [error, setError] = useState('');
 
@@ -22,7 +23,7 @@ export default function Cameras({ data, pid, reload }) {
   async function create(e) {
     e.preventDefault(); setError(''); setNewKey(null);
     try {
-      const body = { name: form.name, kind: form.kind };
+      const body = { name: form.name, kind: form.kind, check_tamper: form.check_tamper };
       if (form.kind === 'zone') body.element_id = form.element_id;
       if (form.kind === 'yard') body.scale_m_per_px = Number(form.scale_m_per_px);
       const r = await api('POST', `/projects/${pid}/cameras`, body);
@@ -45,7 +46,7 @@ export default function Cameras({ data, pid, reload }) {
               return (
                 <tr key={c.id}>
                   <td>{c.name}</td><td>{KIND[c.kind]}</td><td>{c.element_label ?? (c.scale_m_per_px ? `scale ${c.scale_m_per_px} m/px` : '—')}</td>
-                  <td><span className={`badge s-${tone}`}><i>{icon}</i>{label}</span></td>
+                  <td><span className={`badge s-${tone}`}><i>{icon}</i>{label}</span>{h?.tamper && <div className="tiny err">Appears {TAMPER[h.tamper]}: check the camera</div>}</td>
                   <td>{c.last_frame_at ? new Date(c.last_frame_at).toLocaleString('en-GB') : '—'}</td><td className="num">{c.frames}</td>
                   <td><button className="link" onClick={() => toggle(c)}>{c.active ? 'Disable' : 'Enable'}</button></td>
                 </tr>
@@ -63,6 +64,7 @@ export default function Cameras({ data, pid, reload }) {
           <label className="field">Type<select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>{Object.entries(KIND).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
           {form.kind === 'zone' && <label className="field">Element it watches<select required value={form.element_id} onChange={(e) => setForm({ ...form, element_id: e.target.value })}><option value="">Choose…</option>{elements.map((el) => <option key={el.id} value={el.id}>{el.label}</option>)}</select></label>}
           {form.kind === 'yard' && <label className="field">Ground scale (m per pixel)<input type="number" step="any" min={0.001} required value={form.scale_m_per_px} onChange={(e) => setForm({ ...form, scale_m_per_px: e.target.value })} /></label>}
+          <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={form.check_tamper} onChange={(e) => setForm({ ...form, check_tamper: e.target.checked })} />Screen for covered, blurred or moved camera</label>
           <button className="primary" style={{ alignSelf: 'end' }}>Create camera</button>
         </div>
         {error && <div className="err" role="alert">{error}</div>}

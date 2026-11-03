@@ -157,7 +157,7 @@ export async function seed({ reset = false, quiet = false } = {}) {
     zoneCams[t.id] = (await createCamera(pool, p, users.admin, { name: `Zone camera - ${e.label}`, kind: 'zone', element_id: e.id, expected_frames_per_day: 2, detect_defects: false })).camera;
   }
   const yardCam = (await createCamera(pool, p, users.admin, { name: 'Material yard camera', kind: 'yard', scale_m_per_px: YARD_SCALE, expected_frames_per_day: 2, detect_defects: false })).camera;
-  const gateCam = (await createCamera(pool, p, users.admin, { name: 'Inspection camera (site gate)', kind: 'overview', expected_frames_per_day: 1 })).camera;
+  const gateCam = (await createCamera(pool, p, users.admin, { name: 'Inspection camera (site gate)', kind: 'overview', expected_frames_per_day: 1, check_tamper: false })).camera;
   const camRow = async (c) => (await pool.query('SELECT * FROM cameras WHERE id = $1', [c.id])).rows[0];
 
   // ---- simulate the site, day by day. The simulation knows the TRUTH; the system only ever sees pictures.

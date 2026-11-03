@@ -15,6 +15,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 
 import footage
+import health as framehealth
 import pipeline
 import registry
 from severity import SEVERITY_LEVELS
@@ -116,6 +117,14 @@ async def inventory(
         return _stamp(fn(img, scale_m_per_px), model)
     except ImportError as e:
         raise HTTPException(501, f"backend unavailable: {e}")
+
+
+@app.post("/v1/health")
+async def camera_health(image: UploadFile = File(...), refs: list[UploadFile] = File(default=[])):
+    """Tamper and fault screening of one frame against up to 5 earlier frames of the same camera (newest first)."""
+    img = _image(await _read(image))
+    ref_imgs = [_image(await _read(r)) for r in refs[:5]]
+    return framehealth.frame_health(img, ref_imgs)
 
 
 @app.post("/v1/demo/frame")

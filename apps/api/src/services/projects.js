@@ -173,7 +173,7 @@ export async function generateProjectSchedule(db, project, { crews, confirm_rese
     for (const d of sched.dependencies) {
       await c.query('INSERT INTO task_dependencies (task_id, depends_on_id) VALUES ($1,$2)', [idBySeq[d.seq], idBySeq[d.depends_on_seq]]);
     }
-    await c.query('UPDATE projects SET planned_end_date = $2, status = $3 WHERE id = $1', [project.id, sched.planned_end, 'active']);
+    await c.query('UPDATE projects SET planned_end_date = $2, status = $3, planned_crews = $4 WHERE id = $1', [project.id, sched.planned_end, 'active', useCrews]);
     return { ...sched, crews: useCrews, cost_scope: costRates ? 'total' : 'materials' };
   });
 }

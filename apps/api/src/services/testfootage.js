@@ -194,7 +194,13 @@ export async function deleteRun(db, projectId, runId) {
   const run = (await db.query('SELECT * FROM test_runs WHERE id = $1 AND project_id = $2', [runId, projectId])).rows[0];
   if (!run) throw notFound('test run');
   if (run.job_id) await inferenceCall('DELETE', `/v1/test/jobs/${run.job_id}`).catch(() => {}); // stops it if still running
-  await db.query('DELETE FROM test_runs WHERE id = $1', [runId]); // frames cascade; the watcher notices and stops
+  // stop the poller BEFORE deleting: it writes frames into this run, and deleting underneath it can deadlock
+  await db.query(`UPDATE test_runs SET status = 'cancelled' WHERE id = $1 AND status = ANY($2)`, [runId, ACTIVE]);
+  for (let i = 0; i < 80 && watchers.has(runId); i++) await sleep(25);
+  for (let attempt = 0; ; attempt++) {
+    try { await db.query('DELETE FROM test_runs WHERE id = $1', [runId]); break; } // frames cascade
+    catch (e) { if (e.code !== '40P01' || attempt >= 3) throw e; await sleep(50); }  // deadlock with a late write: retry
+  }
   await storage.removeTestRun(run.project_id, run.id);
   return run;
 }

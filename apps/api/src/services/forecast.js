@@ -8,12 +8,13 @@ import { budgetText, scheduleText, productivityText, safetyText } from '../domai
 import { cameraHealth, evidenceSummary, uncoveredTasks } from '../domain/evidence.js';
 import { diffDays, today } from '../domain/dates.js';
 import { accrueCosts, plannedTotals, totalsByCategory } from '../domain/cost.js';
+import { STATE_TEXT, taskLifecycle } from '../domain/lifecycle.js';
 import { getActiveEstimate, getCostRates } from './projects.js';
 import { siteDate } from './ingest.js';
 
 export async function loadState(db, project) {
   const q = (text, params = [project.id]) => db.query(text, params).then((r) => r.rows);
-  const [tasks, progress, spend, defects, analysed, hazards, crews, cameras, costRates] = await Promise.all([
+  const [tasks, progress, spend, defects, analysed, hazards, crews, cameras, costRates, stageObs, inspections, healthRows] = await Promise.all([
     q('SELECT * FROM schedule_tasks WHERE project_id = $1 ORDER BY seq'),
     q(`SELECT l.log_date AS date, tp.task_id, tp.percent_complete AS percent
        FROM task_progress tp JOIN daily_logs l ON l.id = tp.daily_log_id WHERE l.project_id = $1`),
@@ -27,14 +28,28 @@ export async function loadState(db, project) {
        LEFT JOIN cameras c ON c.id = h.camera_id
        WHERE h.project_id = $1 ORDER BY h.risk_rating DESC, h.created_at`),
     q(`SELECT log_date AS date, crews, equipment FROM daily_logs WHERE project_id = $1 AND crews IS NOT NULL ORDER BY log_date`),
-    q(`SELECT id, name, kind, element_id, active, last_frame_at FROM cameras WHERE project_id = $1 ORDER BY kind, name`),
+    q(`SELECT id, name, kind, element_id, active, detect_defects, last_frame_at FROM cameras WHERE project_id = $1 ORDER BY kind, name`),
     getCostRates(db, project.id),
+    q(`SELECT o.element_id, o.observed_on, o.stage, o.fraction, o.evidence FROM stage_observations o JOIN cameras c ON c.id = o.camera_id WHERE c.project_id = $1`),
+    // automated inspections of an element: successful defect analyses of its own zone camera, with the violations they found that day
+    q(`SELECT c.element_id, l.log_date AS date,
+              (SELECT count(*) FROM defects d JOIN media m2 ON m2.id = d.media_id JOIN daily_logs l2 ON l2.id = m2.daily_log_id
+                WHERE m2.camera_id = c.id AND l2.log_date = l.log_date AND d.is_violation)::int AS violations
+       FROM inference_runs r JOIN media m ON m.id = r.media_id JOIN cameras c ON c.id = m.camera_id JOIN daily_logs l ON l.id = m.daily_log_id
+       WHERE m.project_id = $1 AND c.kind = 'zone' AND r.kind = 'defects' AND r.status = 'succeeded' GROUP BY c.id, c.element_id, l.log_date`),
+    // the latest screening results of every camera (newest first), for tamper suspicion
+    q(`SELECT camera_id, flags FROM (
+         SELECT h.camera_id, h.flags, row_number() OVER (PARTITION BY h.camera_id ORDER BY m.captured_at DESC) AS rn
+         FROM camera_health_checks h JOIN media m ON m.id = h.media_id JOIN cameras c ON c.id = h.camera_id WHERE c.project_id = $1) x
+       WHERE rn <= 3 ORDER BY camera_id, rn`),
   ]);
+  const flagsByCamera = {};
+  for (const h of healthRows) (flagsByCamera[h.camera_id] ??= []).push(h.flags);
   return {
     tasks: tasks.map((t) => ({ ...t, planned_cost_pkr: Number(t.planned_cost_pkr), planned_labour_pkr: Number(t.planned_labour_pkr), planned_equipment_pkr: Number(t.planned_equipment_pkr), planned_overhead_pkr: Number(t.planned_overhead_pkr) })),
     progress: progress.map((p) => ({ ...p, percent: Number(p.percent) })),
-    spend, defects, analysed, hazards, crews, costRates,
-    cameras: cameras.map((c) => ({ ...c, last_frame_date: c.last_frame_at ? siteDate(new Date(c.last_frame_at)) : null })),
+    spend, defects, analysed, hazards, crews, costRates, stageObs, inspections,
+    cameras: cameras.map((c) => ({ ...c, last_frame_date: c.last_frame_at ? siteDate(new Date(c.last_frame_at)) : null, recent_flags: flagsByCamera[c.id] ?? [] })),
   };
 }
 
@@ -81,6 +96,19 @@ export async function recompute(db, project, asOf = today()) {
       [project.id, asOf, sdi.sdi, sdi.severity_part, sdi.density_part, sdi.progression_part, sdi.weights, sdi.status, sdi.explanation]);
   }
 
+  // completion lifecycle per task (D4): evidence-driven warnings after the work is placed
+  const elementType = Object.fromEntries((await db.query('SELECT id, element_type FROM design_elements WHERE project_id = $1', [project.id])).rows.map((e) => [e.id, e.element_type]));
+  const lifecycle = state.tasks.map((t) => {
+    const cam = state.cameras.find((c) => c.kind === 'zone' && c.active && c.element_id === t.element_id);
+    return { task_id: t.id, name: t.name, seq: t.seq, ...taskLifecycle({
+      task: t, elementType: elementType[t.element_id], asOf,
+      progress: state.progress.filter((p) => p.task_id === t.id),
+      observations: state.stageObs.filter((o) => o.element_id === t.element_id),
+      inspections: state.inspections.filter((i) => i.element_id === t.element_id),
+      inspectable: !!cam?.detect_defects,
+    }) };
+  });
+
   const desired = desiredAlerts({ budget: ev.metrics.budget, schedule: ev.metrics.schedule, safety, sdi, evidence: evidence.summary });
   const open = (await db.query(
     `SELECT id, dedupe_key, technical_msg, plain_msg FROM alerts WHERE project_id = $1 AND resolved_at IS NULL AND (kind <> 'system' OR dedupe_key LIKE 'evidence:%')`, [project.id])).rows;
@@ -93,7 +121,7 @@ export async function recompute(db, project, asOf = today()) {
   }
   if (toResolve.length) await db.query('UPDATE alerts SET resolved_at = now() WHERE id = ANY($1::uuid[])', [toResolve]);
 
-  return { ready: true, asOf, state, evidence, cost, ...ev, sdi, safety };
+  return { ready: true, asOf, state, evidence, cost, lifecycle, ...ev, sdi, safety };
 }
 
 // ------------------------------------------------------------------ dashboards
@@ -139,6 +167,8 @@ export async function buildDashboard(db, project, role, asOf = today()) {
       productivity: { ...m.productivity, text: productivityText(m.productivity) },
     },
     cost: { scope: r.cost.scope, planned: r.cost.planned, actual: r.cost.actual },
+    lifecycle: r.lifecycle.map((l) => ({ task_id: l.task_id, name: l.name, state: l.state, status: STATE_TEXT[l.state], placed_on: l.placed_on ?? null,
+      warnings: l.warnings.map((w) => ({ step: w.step, text: w.plain })) })),
     evidence: {
       cameras_ok: r.evidence.health.filter((h) => h.status === 'ok').length,
       cameras_expected: r.evidence.health.filter((h) => ['ok', 'stale', 'never'].includes(h.status)).length,
@@ -180,8 +210,10 @@ export async function buildDashboard(db, project, role, asOf = today()) {
   });
   const standardsUsed = (await db.query('SELECT code, title, body, used_for FROM standards_refs ORDER BY code')).rows;
   const inventory = (await db.query(
-    `SELECT i.observed_on AS date, m.code AS material, m.unit, i.stock_qty, i.used_qty, i.delivered_qty
+    `SELECT i.observed_on AS date, m.code AS material, m.unit, i.stock_qty, i.used_qty, i.delivered_qty, i.note
      FROM inventory_daily i JOIN material_catalog m ON m.id = i.material_id WHERE i.project_id = $1 ORDER BY i.observed_on, m.id`, [project.id])).rows;
+  const NOTE_TEXT = { pending_confirmation: 'is not costed yet: a stack looks to have disappeared and the following day’s frames must confirm it', rejected_drop: 'was not costed: the stack reappeared the next day, so it was most likely missed by the model' };
+  const stockNotes = inventory.filter((x) => x.note).slice(-6).map((x) => `Yard stock of ${x.material.toLowerCase()} on ${x.date} ${NOTE_TEXT[x.note]}.`);
   const siteStatus = (await db.query(
     `SELECT log_date AS date, crews, equipment FROM daily_logs WHERE project_id = $1 AND crews IS NOT NULL ORDER BY log_date DESC LIMIT 30`, [project.id])).rows;
   const frames = (await db.query(
@@ -201,7 +233,8 @@ export async function buildDashboard(db, project, role, asOf = today()) {
       safety: { ...investor.headline.safety, technical: sf.technical, detail: r.safety },
     },
     metrics: m,
-    cost: { ...investor.cost, warnings: r.cost.warnings, rates: r.state.costRates },
+    cost: { ...investor.cost, warnings: [...r.cost.warnings, ...stockNotes], rates: r.state.costRates },
+    lifecycle: r.lifecycle.map((l) => ({ ...l, status: STATE_TEXT[l.state], warnings: l.warnings.map((w) => ({ step: w.step, text: w.technical })) })),
     series: { planned: r.series.planned, actual: r.series.actual },
     risk: {
       sdi: r.sdi, safety: r.safety, clean_days_to_close: CLEAN_DAYS_TO_CLOSE,

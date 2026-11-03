@@ -723,6 +723,142 @@ describe('total cost: labour, equipment and overheads (TC-API-COST)', () => {
   });
 });
 
+describe('camera tamper screening, stock robustness and lifecycle (TC-API-ROBUST)', () => {
+  let pid; let key; let camId; const p = () => `/api/projects/${pid}`;
+  const stageRows = async () => (await pool.query('SELECT count(*)::int n FROM stage_observations WHERE camera_id = $1', [camId])).rows[0].n;
+  const cam = async () => (await dash(tokens.eng, pid)).evidence.cameras.find((c) => c.id === camId);
+  const alerts = async () => (await dash(tokens.eng, pid)).alerts.map((a) => a.message).join(' | ');
+  before(async () => {
+    pid = (await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'Tamper project', start_date: addDays(today(), -3) } })).body.project.id;
+    await api('POST', `${p()}/elements`, { token: tokens.eng, body: { label: 'S', element_type: 'slab', length_m: 10, width_m: 10, thickness_m: 0.15, concrete_fc_mpa: 25 } });
+    await api('POST', `${p()}/estimates`, { token: tokens.eng, body: {} });
+    await api('POST', `${p()}/schedule/generate`, { token: tokens.eng, body: {} });
+    const el = (await pool.query('SELECT id FROM design_elements WHERE project_id = $1', [pid])).rows[0].id;
+    const made = await api('POST', `${p()}/cameras`, { token: tokens.admin, body: { name: 'Zone cam', kind: 'zone', element_id: el, detect_defects: false } });
+    key = made.body.key; camId = made.body.camera.id;
+    fake.state.stage = 2;
+  });
+  after(() => { fake.state.healthFlags = []; fake.state.stage = 0; });
+
+  test('a frame flagged as covered is stored but not analysed, and one flagged frame raises no alarm', async () => {
+    fake.state.healthFlags = ['covered'];
+    const before = await stageRows();
+    const r = await ingest(key, { at: minutesAgo(9) });
+    assert.equal(r.status, 201);
+    assert.deepEqual(r.body.health.flags, ['covered']);
+    assert.equal(r.body.analysis.skipped.status, 'skipped'); assert.equal(r.body.analysis.stage, undefined);
+    assert.equal(await stageRows(), before);                                                  // nothing was read from the black frame
+    assert.equal((await pool.query('SELECT count(*)::int n FROM media WHERE camera_id = $1', [camId])).rows[0].n, 1);   // but the frame is kept
+    assert.equal((await pool.query("SELECT count(*)::int n FROM camera_health_checks WHERE camera_id = $1 AND 'covered' = ANY(flags)", [camId])).rows[0].n, 1);
+    assert.notEqual((await cam()).status, 'suspect');
+    assert.doesNotMatch(await alerts(), /blocked, out of focus or moved/);
+  });
+  test('two covered frames in a row make the camera suspect, raise a critical alert and leave safety unverified', async () => {
+    await ingest(key, { at: minutesAgo(8) });
+    const c = await cam();
+    assert.equal(c.status, 'suspect'); assert.equal(c.tamper, 'covered');
+    const d = await dash(tokens.eng, pid);
+    assert.match(d.alerts.map((a) => a.message).join(' | '), /covered or blacked out/);
+    assert.equal(d.alerts.find((a) => /covered or blacked out/.test(a.message)).level, 'critical');
+    assert.equal(d.headline.safety.evidence_gap, true);
+    const inv = await api('GET', `${p()}/dashboard`, { token: tokens.eng });
+    assert.ok(inv.body.evidence.gap);
+  });
+  test('the investor sees a plain-language alert without technical detail', async () => {
+    await pool.query("INSERT INTO project_members VALUES ($1, (SELECT id FROM users WHERE email = 'inv@a.test')) ON CONFLICT DO NOTHING", [pid]);
+    const d = await dash(tokens.inv, pid);
+    const msg = d.alerts.map((a) => a.message).join(' | ');
+    assert.match(msg, /blocked, out of focus or moved/);
+    assert.doesNotMatch(msg, /screening|frames are stored/);
+  });
+  test('clean frames clear the suspicion and analysis resumes', async () => {
+    fake.state.healthFlags = [];
+    const before = await stageRows();
+    const r = await ingest(key, { at: minutesAgo(7) });
+    assert.equal(r.body.analysis.skipped, undefined); assert.equal(r.body.analysis.stage.status, 'succeeded');
+    assert.equal(await stageRows(), before + 1);
+    assert.equal((await cam()).tamper, null);
+    assert.doesNotMatch(await alerts(), /covered or blacked out/);
+  });
+  test('a different view needs three flagged frames in a row, covered and blurred need two', async () => {
+    fake.state.healthFlags = ['redirected'];
+    await ingest(key, { at: minutesAgo(6) }); await ingest(key, { at: minutesAgo(5) });
+    assert.notEqual((await cam()).status, 'suspect');
+    await ingest(key, { at: minutesAgo(4) });
+    assert.equal((await cam()).tamper, 'redirected');
+    fake.state.healthFlags = ['blurred'];
+    await ingest(key, { at: minutesAgo(3) });
+    assert.equal((await cam()).tamper, null);                                                  // a different kind of flag breaks the run of three
+  });
+  test('a camera with screening switched off is always analysed', async () => {
+    fake.state.healthFlags = ['covered'];
+    const el = (await pool.query('SELECT id FROM design_elements WHERE project_id = $1', [pid])).rows[0].id;
+    const c2 = await api('POST', `${p()}/cameras`, { token: tokens.admin, body: { name: 'No screening', kind: 'zone', element_id: el, detect_defects: false, check_tamper: false } });
+    const calls = fake.state.healthCalls;
+    const r = await ingest(c2.body.key, { at: minutesAgo(2) });
+    assert.equal(r.body.analysis.stage.status, 'succeeded'); assert.equal(r.body.health, null);
+    assert.equal(fake.state.healthCalls, calls);                                              // the screening service was not even asked
+    fake.state.healthFlags = [];
+  });
+  test('if the screening service itself fails, the frame is still ingested and analysed', async () => {
+    fake.state.mode = 'error';                                                                 // every call fails
+    const r = await ingest(key, { at: minutesAgo(1) });
+    fake.state.mode = 'ok';
+    assert.equal(r.status, 201); assert.equal(r.body.health, null);
+    assert.equal(r.body.analysis.stage.status, 'failed');                                      // the analysis failure is recorded as before
+  });
+});
+
+describe('stock: a large one-day drop must be confirmed, and the rates workflow rebuilds the baseline', () => {
+  test('a stack the model misses for one frame is not charged as consumption', async () => {
+    const f = (await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'Stock project', start_date: addDays(today(), -6) } })).body.project;
+    await api('POST', `/api/projects/${f.id}/elements`, { token: tokens.eng, body: { label: 'S', element_type: 'slab', length_m: 10, width_m: 10, thickness_m: 0.15, concrete_fc_mpa: 25 } });
+    await api('POST', `/api/projects/${f.id}/estimates`, { token: tokens.eng, body: {} });
+    await api('POST', `/api/projects/${f.id}/schedule/generate`, { token: tokens.eng, body: {} });
+    await api('POST', `/api/projects/${f.id}/cameras`, { token: tokens.admin, body: { name: 'Yard', kind: 'yard', scale_m_per_px: 0.1, detect_defects: false, check_tamper: false } });
+    const sand = (q) => { fake.state.items = [{ material_code: 'SAND', quantity: q, unit: 'm3', area_px: 1, method: 'fake', confidence: 0.5 }]; };
+    // yesterday: stock 100 in the morning, the model misses the pile in the evening (reads 3)
+    // (frames are within the clock-skew window only when backfilled, so insert through the service layer)
+    const cam = (await pool.query('SELECT * FROM cameras WHERE project_id = $1', [f.id])).rows[0];
+    const at = (d, hh) => new Date(`${addDays(today(), d)}T${String(hh).padStart(2, '0')}:00:00Z`);
+    for (const [d, hh, q] of [[-2, 3, 100], [-2, 11, 3], [-1, 3, 98], [-1, 11, 90]]) { sand(q); await ingestFrame(pool, cam, { buffer: jpeg(), capturedAt: at(d, hh), backfill: true }); }
+    const project = (await pool.query('SELECT * FROM projects WHERE id = $1', [f.id])).rows[0];
+    await rebuild(pool, project);
+    const rows = (await pool.query("SELECT observed_on::text AS d, used_qty::float8 AS used, delivered_qty::float8 AS delivered, note FROM inventory_daily WHERE project_id = $1 ORDER BY observed_on", [f.id])).rows;
+    assert.equal(rows[0].used, 0); assert.equal(rows[0].note, 'rejected_drop');                // 100 -> 3 reversed the next morning (98)
+    assert.equal(rows[1].delivered, 0);                                                         // and the rebound is not a delivery
+    assert.equal(rows[1].used, 8);                                                              // the next day is judged on its own
+    const spend = (await pool.query('SELECT coalesce(sum(cost_pkr),0)::float8 AS c FROM material_usage u JOIN daily_logs l ON l.id = u.daily_log_id WHERE l.project_id = $1', [f.id])).rows[0].c;
+    assert.ok(spend > 0 && spend < 8 * 3002 * 1.001, 'only the real 8 m3 is charged');
+    const eng = await dash(tokens.eng, f.id);
+    assert.match(eng.cost.warnings.join(' '), /most likely missed by the model/);
+  });
+  test('setting the cost rates after the schedule exists rebuilds the baseline with the same crews when no progress is recorded', async () => {
+    const f = (await api('POST', '/api/projects', { token: tokens.eng, body: { name: 'Rates after schedule', start_date: addDays(today(), -2) } })).body.project;
+    await api('POST', `/api/projects/${f.id}/elements`, { token: tokens.eng, body: { label: 'S', element_type: 'slab', length_m: 10, width_m: 10, thickness_m: 0.15, concrete_fc_mpa: 25 } });
+    await api('POST', `/api/projects/${f.id}/estimates`, { token: tokens.eng, body: {} });
+    await api('POST', `/api/projects/${f.id}/schedule/generate`, { token: tokens.eng, body: { crews: 3 } });
+    assert.equal((await pool.query('SELECT planned_crews FROM projects WHERE id = $1', [f.id])).rows[0].planned_crews, 3);
+    const r = await api('POST', `/api/projects/${f.id}/cost-rates`, { token: tokens.eng, body: { crew_rate_pkr: 10_000, overhead_pct: 0, equipment: [] } });
+    assert.equal(r.status, 201); assert.match(r.body.note, /rebuilt/);
+    const t = (await api('GET', `/api/projects/${f.id}/schedule`, { token: tokens.eng })).body.tasks[0];
+    const days = (await pool.query("SELECT count(*)::int n FROM generate_series($1::date, $2::date, interval '1 day') d WHERE extract(dow FROM d) <> 0", [t.planned_start, t.planned_end])).rows[0].n;
+    assert.equal(Number(t.planned_labour_pkr), 3 * 10_000 * days);                              // the 3 crews were kept
+  });
+});
+
+describe('completion lifecycle on the dashboards (TC-API-LIFE-D4)', () => {
+  test('every task has a lifecycle entry; investors get plain wording, engineers the technical detail', async () => {
+    const e = await dash(tokens.eng); const i = await dash(tokens.inv);
+    const tasks = (await api('GET', `/api/projects/${projectId}/schedule`, { token: tokens.eng })).body.tasks;
+    assert.equal(e.lifecycle.length, tasks.length); assert.equal(i.lifecycle.length, tasks.length);
+    assert.ok(i.lifecycle.every((l) => l.status && Array.isArray(l.warnings)));
+    assert.equal(i.lifecycle[0].cure_days_required, undefined);                                 // no engineering fields for investors
+    const placed = e.lifecycle.find((l) => l.state !== 'not_placed');
+    assert.ok(!placed || 'cure_days_required' in placed);                                      // engineers get the technical fields when a task is placed
+  });
+});
+
 describe('the three roles do not overlap (TC-API-ROLES)', () => {
   const p = () => `/api/projects/${projectId}`;
   test('administrators cannot enter project content: BOQ, estimate, schedule, crews, alert acknowledgement', async () => {

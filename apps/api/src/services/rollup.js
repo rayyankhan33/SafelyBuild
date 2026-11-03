@@ -76,8 +76,8 @@ async function rebuildInventory(db, project) {
   const ids = await logIds(db, project.id, days.map((d) => d.date));
   for (const h of hist) {
     await db.query(
-      `INSERT INTO inventory_daily (project_id, observed_on, material_id, start_qty, stock_qty, used_qty, delivered_qty) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [project.id, h.date, cat[h.material_code], round3(h.start), round3(h.end), round3(h.used), round3(h.delivered)]);
+      `INSERT INTO inventory_daily (project_id, observed_on, material_id, start_qty, stock_qty, used_qty, delivered_qty, note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [project.id, h.date, cat[h.material_code], round3(h.start), round3(h.end), round3(h.used), round3(h.delivered), h.note]);
     if (h.used > 0) {
       const rate = priorRate[`${h.date}|${h.material_code}`] ?? rates[h.material_code] ?? 0;
       await db.query(

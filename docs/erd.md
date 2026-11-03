@@ -28,6 +28,14 @@ erDiagram
     timestamp_with_time_zone created_at
     text actor_label
   }
+  camera_health_checks {
+    uuid id PK
+    uuid camera_id FK
+    uuid media_id FK
+    timestamp_with_time_zone checked_at
+    jsonb metrics
+    text_array flags
+  }
   cameras {
     uuid id PK
     uuid project_id FK
@@ -42,6 +50,7 @@ erDiagram
     uuid created_by FK
     timestamp_with_time_zone created_at
     timestamp_with_time_zone last_frame_at
+    boolean check_tamper
   }
   cost_estimates {
     uuid id PK
@@ -187,6 +196,7 @@ erDiagram
     numeric stock_qty
     numeric used_qty
     numeric delivered_qty
+    text note
   }
   inventory_observations {
     uuid id PK
@@ -282,6 +292,7 @@ erDiagram
     uuid created_by FK
     timestamp_with_time_zone created_at
     boolean is_demo
+    integer planned_crews
   }
   risk_scores {
     uuid id PK
@@ -379,6 +390,8 @@ erDiagram
   users |o--o{ alerts : "acknowledged_by"
   projects |o--o{ audit_log : "project_id"
   users |o--o{ audit_log : "user_id"
+  cameras ||--o{ camera_health_checks : "camera_id"
+  media ||--o{ camera_health_checks : "media_id"
   design_elements |o--o{ cameras : "element_id"
   projects ||--o{ cameras : "project_id"
   users |o--o{ cameras : "created_by"
