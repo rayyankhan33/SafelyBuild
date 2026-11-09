@@ -8,10 +8,13 @@
     "brick_stack",
     "rebar_bundle"
   ],
-  "trained_on": "synthetic yard scenes (synth/yard.py); NOT real photographs",
-  "epochs": 15,
+  "trained_on": "856 real photographs (720 sand/gravel piles from Piled Materials v1, 136 building-site photographs from Construction Project Monitoring; polygons as drawn, box labels converted with SAM = auto-labelled) plus 280 synthetic scenes (synth/yard.py); test splits held out",
+  "epochs": 12,
   "imgsz": 352,
-  "train_fraction": 0.4,
-  "train_seconds": 4797,
-  "weights_sha256": "a774caa7938aa4299a14f10cff9987cab056c544b0069c402529b5bb9cf761f8"
+  "train_fraction": 1.0,
+  "train_seconds": 4042,
+  "weights_sha256": "1a022c2a2c1db71ca9ee744e042232484e0b5252eaad18517e0bd774cd65b9c6",
+  "version": "0.2.0",
+  "replaces": "0.1.0 (synthetic scenes only; found 11.8% of real piles on the held-out test photographs)",
+  "trained": "2026-11-09"
 }

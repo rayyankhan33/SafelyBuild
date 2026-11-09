@@ -141,3 +141,37 @@ def test_plugin_without_weights_is_501_and_default_is_unaffected(monkeypatch, tm
     assert r.status_code == 501 and "not available" in r.json()["detail"]
     d = client.post("/v1/inventory?scale_m_per_px=0.05", files={"image": ("a.png", data, "image/png")})
     assert d.status_code == 200 and d.json()["backend"] == "classical_color"
+
+
+# ---------------------------------------------------------------- the plugin only quotes a real-photo measurement made on its own weights
+def _info_with(tmp_path, monkeypatch, trained_on, eval_sha, pile_recall=0.9):
+    import json
+    w = tmp_path / "yard_seg.pt"
+    w.write_bytes(b"weights")
+    meta = tmp_path / "yard_seg.json"
+    meta.write_text(json.dumps({"trained_on": trained_on}))
+    real = tmp_path / "real.json"
+    real.unlink(missing_ok=True)
+    if eval_sha is not None:
+        real.write_text(json.dumps({"weights_sha256": eval_sha, "classes": {"pile (sand + aggregate)": {"recall": pile_recall, "pooled_pixel_iou": 0.7}}}))
+    monkeypatch.setattr(yard_seg, "WEIGHTS", w)
+    monkeypatch.setattr(yard_seg, "META", meta)
+    monkeypatch.setattr(yard_seg, "REAL_EVAL", real)
+    monkeypatch.setattr(yard_seg, "EVAL", tmp_path / "none.json")
+    return yard_seg._info(), registry.file_sha256(w)
+
+
+def test_real_photo_numbers_are_quoted_only_for_the_weights_they_were_measured_on(tmp_path, monkeypatch):
+    _, sha = _info_with(tmp_path, monkeypatch, "real photographs plus synthetic scenes", None)
+    info, sha = _info_with(tmp_path, monkeypatch, "real photographs plus synthetic scenes", sha)
+    assert "90%" in info["known_issue"] and "not yet validated on your own yard" in info["known_issue"]
+    stale, _ = _info_with(tmp_path, monkeypatch, "real photographs plus synthetic scenes", "0" * 64)
+    assert "different weights" in stale["known_issue"] and "90%" not in stale["known_issue"]
+    none, _ = _info_with(tmp_path, monkeypatch, "real photographs plus synthetic scenes", None)
+    assert "not yet measured" in none["known_issue"]
+
+
+def test_synthetic_only_weights_keep_the_do_not_rely_warning(tmp_path, monkeypatch):
+    _, sha = _info_with(tmp_path, monkeypatch, "synthetic yard scenes (synth/yard.py); NOT real photographs", None)
+    info, _ = _info_with(tmp_path, monkeypatch, "synthetic yard scenes (synth/yard.py); NOT real photographs", sha, pile_recall=0.118)
+    assert "synthetic scenes only" in info["known_issue"] and "do not rely on it in the field" in info["known_issue"]

@@ -4,7 +4,7 @@ The financial module has two halves that are built very differently:
 
 | Half | What it needs | Built how |
 |---|---|---|
-| **How much material was used** (spend on materials) | Computer vision on the yard camera | A **fine-tuned pretrained YOLO11 nano segmentation model** (`yard_seg`), trained here on synthetic yard scenes |
+| **How much material was used** (spend on materials) | Computer vision on the yard camera | A **fine-tuned pretrained YOLO11 nano segmentation model** (`yard_seg`), trained here on synthetic yard scenes (version 0.1.0) and then fine-tuned on 856 real photographs plus 280 synthetic scenes (version 0.2.0, 2026-11-09; see section 4.1) |
 | **Labour, equipment, overheads** (rest of the total cost) | Arithmetic on rates the engineer enters once and the daily crew/equipment log | No model: `domain/cost.js` |
 
 ## 1. What we did for the model, and why
@@ -55,13 +55,17 @@ Median absolute error of the estimated quantity, when the material is present; r
 
 Full numbers: `models/yard_seg_eval.json`.
 
+### 4.1 Version 0.2.0 (fine-tuned on real photographs, 2026-11-09)
+
+The table above is version 0.1.0 (synthetic scenes only). Version 0.2.0 was fine-tuned on 856 real photographs plus 280 synthetic scenes (`docs/datasets.md` 4.6) and is the installed model; `models/yard_seg_eval.json` now holds its synthetic numbers. Median absolute error of the quantity, same synthetic test frames, 0.1.0 > 0.2.0: cement 3.2 % > 6.5 %, sand 2.2 % > 3.0 %, aggregate 2.6 % > 2.9 %, bricks 2.9 % > 4.3 %, rebar 5.0 % > 7.4 %. Mean bias on the test frames: cement +5 % > +14 %, sand +2 % > +20 %, aggregate +2 % > +3 %, bricks +3 % > +4 %, rebar +1 % > +16 %. On the shifted frames, recall: cement 0.99 > 0.99, sand 0.95 > 0.84, aggregate 1.00 > 1.00, bricks 0.71 > 0.77, rebar 0.98 > 0.98. The model gave up a little on synthetic frames to work on real ones: on held-out real photographs it now finds 97 % of piles (was 12 %) and measures footprints to within about 15 % (was 14 to 16 times out). See `docs/datasets.md` 4.6 for the real-photo table and its limits.
+
 ## 5. How to read this honestly
 
 - **The model learned the task on this synthetic distribution.** Median errors are 2 to 5 % and the classical method collapses once colours are randomised and look-alikes appear. That is the point of the comparison: a colour threshold only works on the frames it was tuned for.
 - **It degrades on colours it never saw.** On the shifted set, cement and aggregate precision drop (81 % and 88 %): look-alikes are mistaken for stock, and the mean bias rises (+51 % cement, +30 % aggregate) because a single false detection adds a whole phantom stack. Pale bricks are missed 29 % of the time. Expect this kind of failure on real yards, probably worse.
 - **This is not evidence of real-world accuracy.** The ground truth uses the same geometry formulas as the estimator, so these numbers measure how well the model *sees* a pile or stack. They say nothing about whether a real sand pile is a cone of 34 degrees or whether real bags stack 8 high. That needs a real yard with measured deliveries.
 - **A missed detection looks like consumption.** If the model misses a stack on the end-of-day frame, stock appears to fall and spend is over-stated; a phantom stack does the opposite. The 2 % deadband does not protect against this. Real-yard evaluation must report this separately.
-- **Reliability stays `unvalidated`** and the model stays opt-in until it has been measured on real photographs and, ideally, a known delivery.
+- **Reliability stays `unvalidated`** and the model stays opt-in. Version 0.2.0 has been measured on held-out real photographs from public datasets (`docs/datasets.md` 4.6), but not on a real yard of your own or a known delivery.
 
 ## 6. Total cost (labour, equipment, overheads)
 

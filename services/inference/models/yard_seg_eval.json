@@ -4,37 +4,37 @@
       "CEMENT": {
         "frames_with_material": 70,
         "recall": 0.971,
-        "precision": 0.986,
-        "median_abs_pct_error": 3.2,
-        "mean_signed_pct_error": 5.3
+        "precision": 0.958,
+        "median_abs_pct_error": 6.5,
+        "mean_signed_pct_error": 13.9
       },
       "SAND": {
         "frames_with_material": 70,
         "recall": 1.0,
         "precision": 1.0,
-        "median_abs_pct_error": 2.2,
-        "mean_signed_pct_error": 1.7
+        "median_abs_pct_error": 3.0,
+        "mean_signed_pct_error": 20.0
       },
       "AGGREGATE": {
         "frames_with_material": 67,
         "recall": 1.0,
         "precision": 1.0,
-        "median_abs_pct_error": 2.6,
-        "mean_signed_pct_error": 1.5
+        "median_abs_pct_error": 2.9,
+        "mean_signed_pct_error": 3.2
       },
       "BRICK": {
         "frames_with_material": 63,
         "recall": 1.0,
-        "precision": 0.969,
-        "median_abs_pct_error": 2.9,
-        "mean_signed_pct_error": 3.0
+        "precision": 0.955,
+        "median_abs_pct_error": 4.3,
+        "mean_signed_pct_error": 3.8
       },
       "REBAR": {
         "frames_with_material": 61,
-        "recall": 0.984,
-        "precision": 0.984,
-        "median_abs_pct_error": 5.0,
-        "mean_signed_pct_error": 0.5
+        "recall": 0.967,
+        "precision": 0.922,
+        "median_abs_pct_error": 7.4,
+        "mean_signed_pct_error": 15.7
       }
     },
     "classical": {
@@ -81,37 +81,37 @@
       "CEMENT": {
         "frames_with_material": 71,
         "recall": 0.986,
-        "precision": 0.814,
-        "median_abs_pct_error": 4.5,
-        "mean_signed_pct_error": 50.7
+        "precision": 0.805,
+        "median_abs_pct_error": 6.6,
+        "mean_signed_pct_error": 44.4
       },
       "SAND": {
         "frames_with_material": 56,
-        "recall": 0.946,
+        "recall": 0.839,
         "precision": 1.0,
-        "median_abs_pct_error": 2.1,
-        "mean_signed_pct_error": -1.8
+        "median_abs_pct_error": 1.7,
+        "mean_signed_pct_error": -4.7
       },
       "AGGREGATE": {
         "frames_with_material": 56,
         "recall": 1.0,
-        "precision": 0.875,
-        "median_abs_pct_error": 2.1,
-        "mean_signed_pct_error": 29.5
+        "precision": 0.812,
+        "median_abs_pct_error": 2.9,
+        "mean_signed_pct_error": 58.3
       },
       "BRICK": {
         "frames_with_material": 69,
-        "recall": 0.71,
-        "precision": 0.98,
-        "median_abs_pct_error": 3.6,
-        "mean_signed_pct_error": -3.2
+        "recall": 0.768,
+        "precision": 0.981,
+        "median_abs_pct_error": 5.1,
+        "mean_signed_pct_error": 9.4
       },
       "REBAR": {
         "frames_with_material": 63,
         "recall": 0.984,
-        "precision": 0.984,
-        "median_abs_pct_error": 3.7,
-        "mean_signed_pct_error": 0.2
+        "precision": 0.954,
+        "median_abs_pct_error": 5.0,
+        "mean_signed_pct_error": 3.5
       }
     },
     "classical": {

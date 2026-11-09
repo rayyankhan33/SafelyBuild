@@ -108,7 +108,7 @@ Checked on the Universe pages (overview and the 12-image sample dialog); the ful
 
 Rebar bundles seen from the side still have no suitable public set; ConRebSeg (section 4.2) is exposed rebar in shotcrete work, not stored bundles.
 
-### 4.5 First measurement of the yard model on real photographs (2026-11-06)
+### 4.5 First measurement of the yard model on real photographs (2026-11-06; version 0.1.0, synthetic only)
 
 `evaluate_real.py` scores `yard_seg` on the held-out real `test` split of a built dataset (footprint overlap and area, per class, only for classes that dataset labels; see its docstring). Result of the current synthetic-only weights on `data/yard_real/piles` test (106 real photographs of sand and gravel piles; `models/yard_seg_real_eval.json`):
 
@@ -131,6 +131,29 @@ Same weights on the held-out real `test` frames of `data/yard_real/piles` and `d
 
 Reading it: piles are almost never found. For cement and rebar the model "finds" the material on almost every frame but with a footprint **14 to 16 times too large** and no overlap with the real stack, so it is reacting to site texture, not to the stack. Bricks are never found. A quantity computed from these masks would be off by an order of magnitude. Aggregate piles are under-measured (0.06) and bags and rebar over-measured (14 to 16): the errors have opposite signs, so no single scale factor can correct them.
 
+### 4.6 Fine-tuning on the real photographs (2026-11-09, version 0.2.0)
+
+`train_yard.py` fine-tuned the COCO-pretrained YOLO11n-seg on **856 real photographs** (720 sand and gravel piles from `data/yard_real/piles`, 136 building-site photographs from `data/yard_real/site`) plus **280 synthetic scenes** (so the model keeps what the synthetic scenes taught it), 12 epochs at 352 px, about 70 minutes on the CPU. The `val` splits of the two real datasets picked the checkpoint (best epoch 12, mask mAP50 0.647 on 257 real validation images); the `test` splits (106 + 48 photographs) were never used for training or selection.
+
+Held-out real `test` frames of `piles` and `site` together (`models/yard_seg_real_eval.json`, produced by `evaluate_real.py`), compared with the synthetic-only weights of 4.5:
+
+| Class | Test frames | Recall (before > after) | Precision (after) | Pooled IoU (after) | Median predicted / true area (before > after) |
+|---|---|---|---|---|---|
+| pile (sand + aggregate merged) | 152 | 11.8 % > **96.7 %** | 99.3 % | 0.745 | 0.06 > **1.07** |
+| sand_pile | 55 | not scored | 86.4 % | 0.702 | 1.04 |
+| aggregate_pile | 99 | not scored | 89.9 % | 0.626 | 1.08 |
+| cement_bags | 31 | 90.3 % > 51.6 % | 88.9 % | 0.646 | 15.9 > **1.12** |
+| brick_stack | 18 | 0 % > **88.9 %** | 100 % | 0.728 | none > 1.09 |
+| rebar_bundle | 17 | 100 % > 94.1 % | 84.2 % | 0.317 | 13.6 > **0.86** |
+
+Reading it:
+- **The footprints are now the right size.** Median predicted area is within about 15 % of the labelled area for piles, bags and bricks, where the synthetic-only model was off by 14 to 16 times (cement, rebar) or 17 times too small (piles). Median absolute area error: sand 6.7 %, aggregate 11.7 %, bricks 9.0 %, cement 14.8 %, rebar 43.7 %.
+- **Cement recall fell from 90 % to 52 %, and that is the honest figure.** The old 90 % came from covering the whole image. The model is now precise (89 %) but finds only about half of the stacks, and its median per-frame overlap is 0.28. Cement is the weakest class after rebar.
+- **Rebar is detected, not measured:** 94 % of frames, but overlap 0.32 and 44 % area error.
+- The synthetic evaluation (`yard_seg_eval.json`) moved slightly the wrong way, as expected after mixing in real photographs (median error 3 to 7 % instead of 2 to 5 %; sand mean bias +20 % instead of +2 %). `docs/financial-model.md` 4.1 has the table.
+
+**Limits.** The test frames come from the same two public datasets as the training frames, so they are more alike than a new yard would be; the site set covers only a handful of building sites; the brick, cement and rebar masks of the site set were produced by SAM from boxes (auto-labelled), so the model is scored against those masks, not hand-drawn outlines; and the step from footprint area to bags or cubic metres is still the uncalibrated geometry of `scene.py`. The model stays opt-in and `unvalidated` until it is measured on your own yard with a counted stack.
+
 ## 5. Honest limits and what to do
 
 - **These datasets teach recognition, not measurement.** None has a known quantity, a camera scale or a delivery record. They can improve how well the model finds a pile or a stack; the number of bags or cubic metres still depends on the geometry constants and a calibrated yard, which need your own camera and a counted stack.
@@ -139,4 +162,4 @@ Reading it: piles are almost never found. For cement and rebar the model "finds"
 - **Licences.** The Roboflow sets are CC BY 4.0 (cite them). Several academic ones are non-commercial or no-derivatives; check before any commercial use.
 - **Evaluation discipline.** Keep one split that is never trained on (CODEBRIM `test`, and a held-out set of real yard frames).
 
-Recommended order: (1) retrain the crack classifier on full SDNET2018 and evaluate on CODEBRIM `test`; (2) train the defects detector on `codebrim_platform` (a GPU is advisable: about 1,000 images at 1280 px); (3) fine-tune `yard_seg` on `data/yard_real/piles` mixed with the synthetic scenes (`--combine` writes the data.yaml), keeping `piles` test as the held-out check for sand and gravel; (4) collect real yard frames with known quantities for the evaluation that matters.
+Recommended order: (1) retrain the crack classifier on full SDNET2018 and evaluate on CODEBRIM `test`; (2) train the defects detector on `codebrim_platform` (a GPU is advisable: about 1,000 images at 1280 px); (3) **done 2026-11-09**: `yard_seg` fine-tuned on `data/yard_real/piles` and `site` mixed with synthetic scenes (4.6); (4) collect real yard frames with known quantities for the evaluation that matters.

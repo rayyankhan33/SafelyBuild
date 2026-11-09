@@ -24,65 +24,65 @@
     "sand_pile": {
       "frames_scored": 106,
       "frames_with_material": 55,
-      "recall": 0.018,
-      "precision": 0.5,
-      "pooled_pixel_iou": 0.0,
-      "median_frame_iou": 0.0,
-      "median_abs_area_error_pct": 94.7,
-      "median_pred_over_true_area": 0.053
+      "recall": 0.927,
+      "precision": 0.864,
+      "pooled_pixel_iou": 0.702,
+      "median_frame_iou": 0.906,
+      "median_abs_area_error_pct": 6.7,
+      "median_pred_over_true_area": 1.043
     },
     "aggregate_pile": {
       "frames_scored": 154,
       "frames_with_material": 99,
-      "recall": 0.121,
-      "precision": 0.667,
-      "pooled_pixel_iou": 0.002,
-      "median_frame_iou": 0.0,
-      "median_abs_area_error_pct": 92.9,
-      "median_pred_over_true_area": 0.071
+      "recall": 0.899,
+      "precision": 0.899,
+      "pooled_pixel_iou": 0.626,
+      "median_frame_iou": 0.814,
+      "median_abs_area_error_pct": 11.7,
+      "median_pred_over_true_area": 1.08
     },
     "pile (sand + aggregate)": {
       "frames_scored": 154,
       "frames_with_material": 152,
-      "recall": 0.118,
-      "precision": 0.947,
-      "pooled_pixel_iou": 0.001,
-      "median_frame_iou": 0.0,
-      "median_abs_area_error_pct": 94.3,
-      "median_pred_over_true_area": 0.057
+      "recall": 0.967,
+      "precision": 0.993,
+      "pooled_pixel_iou": 0.745,
+      "median_frame_iou": 0.859,
+      "median_abs_area_error_pct": 9.2,
+      "median_pred_over_true_area": 1.066
     },
     "cement_bags": {
       "frames_scored": 48,
       "frames_with_material": 31,
-      "recall": 0.903,
-      "precision": 0.651,
-      "pooled_pixel_iou": 0.0,
-      "median_frame_iou": 0.0,
-      "median_abs_area_error_pct": 1494.7,
-      "median_pred_over_true_area": 15.947
+      "recall": 0.516,
+      "precision": 0.889,
+      "pooled_pixel_iou": 0.646,
+      "median_frame_iou": 0.28,
+      "median_abs_area_error_pct": 14.8,
+      "median_pred_over_true_area": 1.117
     },
     "brick_stack": {
       "frames_scored": 48,
       "frames_with_material": 18,
-      "recall": 0.0,
-      "precision": 0.0,
-      "pooled_pixel_iou": 0.0,
-      "median_frame_iou": 0.0,
-      "median_abs_area_error_pct": null,
-      "median_pred_over_true_area": null
+      "recall": 0.889,
+      "precision": 1.0,
+      "pooled_pixel_iou": 0.728,
+      "median_frame_iou": 0.836,
+      "median_abs_area_error_pct": 9.0,
+      "median_pred_over_true_area": 1.09
     },
     "rebar_bundle": {
       "frames_scored": 48,
       "frames_with_material": 17,
-      "recall": 1.0,
-      "precision": 0.354,
-      "pooled_pixel_iou": 0.012,
-      "median_frame_iou": 0.0,
-      "median_abs_area_error_pct": 1262.8,
-      "median_pred_over_true_area": 13.628
+      "recall": 0.941,
+      "precision": 0.842,
+      "pooled_pixel_iou": 0.317,
+      "median_frame_iou": 0.465,
+      "median_abs_area_error_pct": 43.7,
+      "median_pred_over_true_area": 0.861
     }
   },
-  "weights": "yard_seg.pt",
-  "weights_sha256": "a774caa7938aa4299a14f10cff9987cab056c544b0069c402529b5bb9cf761f8",
+  "weights": "best.pt",
+  "weights_sha256": "1a022c2a2c1db71ca9ee744e042232484e0b5252eaad18517e0bd774cd65b9c6",
   "conf": 0.25
 }

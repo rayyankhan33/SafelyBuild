@@ -7,8 +7,9 @@ footprint; the footprint becomes a quantity with the same documented formulas as
 (scene.py: cone volume for piles, bag face x layers, bricks and kg per m2 of footprint). Only the SEEING is
 learned; the geometry assumptions are unchanged and still need calibrating on a real yard.
 
-Weights: models/yard_seg.pt (+ yard_seg.json, yard_seg_eval.json). Trained on SYNTHETIC scenes only
-(synth/yard.py), so reliability is "unvalidated" until it is measured on real photographs.
+Weights: models/yard_seg.pt (+ yard_seg.json, yard_seg_eval.json, yard_seg_real_eval.json). Version 0.2.0 was
+fine-tuned on 856 real photographs (public datasets) plus 280 synthetic scenes; version 0.1.0 used synthetic scenes
+only and found 11.8% of real piles. Reliability stays "unvalidated": it has not been measured on the user's own yard.
 
 Try it without activating it:   POST /v1/inventory?backend=yard_seg
 Activate it:                    BACKEND_INVENTORY=yard_seg   or   models/active.json {"inventory": "yard_seg"}
@@ -105,16 +106,26 @@ def _info() -> dict:
         pile = raw.get("classes", {}).get("pile (sand + aggregate)", {})
         real_eval = {"datasets": list(raw.get("datasets", {})), "splits": raw.get("splits"), "weights_sha256": raw.get("weights_sha256"),
                      "pile_recall": pile.get("recall"), "pile_pooled_iou": pile.get("pooled_pixel_iou"), "classes": raw.get("classes")}
+    sha = registry.file_sha256(WEIGHTS)
+    trained_on = meta.get("trained_on", "synthetic yard scenes (synth/yard.py)")
+    # Only quote a real-photo measurement that was made on THESE weights: an old file next to new weights must not vouch for them.
+    measured_here = bool(real_eval and real_eval.get("weights_sha256") == sha and real_eval.get("pile_recall") is not None)
+    if measured_here:
+        issue = ("measured on held-out test photographs from the same public datasets it was trained on (pile recall {:.0%}, evaluate_real.py); "
+                 "not yet validated on your own yard, and the footprint-to-quantity geometry is uncalibrated").format(real_eval["pile_recall"])
+    elif real_eval:
+        issue = "the real-photo measurement in models/yard_seg_real_eval.json belongs to different weights: re-run evaluate_real.py"
+    else:
+        issue = "not yet measured on real yard photographs"
+    if "NOT real photographs" in trained_on:
+        issue = "trained on synthetic scenes only; " + issue + ("; do not rely on it in the field" if measured_here else "")
     return {
-        "weights_sha256": registry.file_sha256(WEIGHTS),
+        "weights_sha256": sha,
         "base": meta.get("base"),
-        "trained_on": meta.get("trained_on", "synthetic yard scenes (synth/yard.py)"),
+        "trained_on": trained_on,
         "metrics_synthetic": {k: v for k, v in ev.items() if k in ("test", "test_shift")} or None,
         "metrics_real_photos": real_eval or None,
-        "known_issue": ("trained on synthetic scenes only" + (
-            "; on real photographs of sand and gravel piles it found %s of them (evaluate_real.py): do not rely on it in the field"
-            % ("{:.0%}".format(real_eval["pile_recall"])) if real_eval and real_eval.get("pile_recall") is not None
-            else "; not yet measured on real yard photographs")),
+        "known_issue": issue,
     }
 
 
@@ -125,7 +136,7 @@ def _available() -> bool:
 
 BACKEND = registry.Backend(
     name="yard_seg",
-    version="0.1.0",                                    # bump on every retrain; stored with every result
+    version="0.2.0",                                    # bump on every retrain; stored with every result
     tasks={"inventory": inventory},
     available=_available,
     info=_info,
