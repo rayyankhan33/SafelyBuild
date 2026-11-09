@@ -27,6 +27,7 @@ HERE = Path(__file__).resolve().parents[1]
 WEIGHTS = HERE / "models" / "yard_seg.pt"
 META = WEIGHTS.with_suffix(".json")
 EVAL = HERE / "models" / "yard_seg_eval.json"
+REAL_EVAL = HERE / "models" / "yard_seg_real_eval.json"      # written by evaluate_real.py
 CONF = 0.25
 
 
@@ -98,12 +99,22 @@ def inventory(img: np.ndarray, scale_m_per_px: float) -> dict:
 def _info() -> dict:
     meta = json.loads(META.read_text()) if META.is_file() else {}
     ev = json.loads(EVAL.read_text()) if EVAL.is_file() else {}
+    real_eval = None
+    if REAL_EVAL.is_file():
+        raw = json.loads(REAL_EVAL.read_text())
+        pile = raw.get("classes", {}).get("pile (sand + aggregate)", {})
+        real_eval = {"datasets": list(raw.get("datasets", {})), "splits": raw.get("splits"), "weights_sha256": raw.get("weights_sha256"),
+                     "pile_recall": pile.get("recall"), "pile_pooled_iou": pile.get("pooled_pixel_iou"), "classes": raw.get("classes")}
     return {
         "weights_sha256": registry.file_sha256(WEIGHTS),
         "base": meta.get("base"),
         "trained_on": meta.get("trained_on", "synthetic yard scenes (synth/yard.py)"),
         "metrics_synthetic": {k: v for k, v in ev.items() if k in ("test", "test_shift")} or None,
-        "known_issue": "trained on synthetic scenes only; not yet measured on real yard photographs",
+        "metrics_real_photos": real_eval or None,
+        "known_issue": ("trained on synthetic scenes only" + (
+            "; on real photographs of sand and gravel piles it found %s of them (evaluate_real.py): do not rely on it in the field"
+            % ("{:.0%}".format(real_eval["pile_recall"])) if real_eval and real_eval.get("pile_recall") is not None
+            else "; not yet measured on real yard photographs")),
     }
 
 

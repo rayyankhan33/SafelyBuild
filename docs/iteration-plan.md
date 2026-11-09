@@ -30,7 +30,7 @@ Owners are **proposed** from the proposal's work division; the team should confi
 | 13 | Test suite and results log | All | Done (261 tests) | docs/test-results.md |
 | 14 | Docker packaging | Atyab | Written, **not run** | docker-compose.yml |
 | 15 | **Real-footage evaluation of all backends** | Hadi + teammate | **Not started** (no labelled real photos) | - |
-| 16 | **Trained model integrated and measured** | Teammate | **In progress by teammate** for rust/honeycomb (not in repo). **Cracks: done as a plugin** (Rayyan): MobileNetV3 trained on SDNET2018, measured on held-out photographs (AUC 0.88) and on an out-of-domain check that shows many false alarms; opt-in, not active; no real CCTV footage yet | docs/model-integration.md, [crack-model.md](crack-model.md), `plugins/crack_cnn.py`, `tests/test_crack.py` |
+| 16 | **Trained model integrated and measured** | Teammate | **In progress by teammate** for rust/honeycomb (not in repo). **Cracks: done as a plugin** (Rayyan): MobileNetV3 trained on the complete SDNET2018 (version 2, 2026-11-09), measured on 35 held-out photographs (AUC 0.94; version 1 scored 0.83 on the same photographs) and on an out-of-domain check on 1,051 CODEBRIM photographs that still flags about 1 in 3 clean images at the default threshold; opt-in, not active; no real CCTV footage yet | docs/model-integration.md, [crack-model.md](crack-model.md), `plugins/crack_cnn.py`, `tests/test_crack.py` |
 | 16b | CCTV video monitor for cracks (temporal confirmation) | Rayyan | Built; verified on synthetic clips only | `services/inference/crack_video.py` |
 | 17 | YOLO-World pretrained backend run and measured | Hadi | Installed and smoke-tested 2026-10-13 (nothing found at default threshold; no steel at any threshold); **accuracy not measured, not active** | docs/model-integration.md section 5 |
 | 18 | Camera tamper checks (lens covered, out of focus, redirected) | Rayyan | **Built** (FR-45): frame screening in the inference service, flags stored per frame, suspect camera -> critical alert and "not verified"; thresholds **uncalibrated**, synthetic frames only | `health.py`, `domain/evidence.js`, TC-INF-HEALTH, TC-EVD-TAMPER, TC-API-ROBUST |
@@ -55,6 +55,7 @@ Sprint 2 goal: real footage and measured accuracy, plus total cost and the compl
 | Camera tamper screening (FR-45) | `health.py`, TC-INF-HEALTH |
 | Missed-stack protection for stock (FR-46) | `domain/inventory.js`, TC-INV-DROP |
 | Rates workflow: saving the rates rebuilds the baseline | TC-API-ROBUST |
+| Dataset inventory of `E:\Datasets`, CODEBRIM detection dataset (native and platform classes), corrosion classification set, public yard-material datasets surveyed | `docs/datasets.md`, `training/build_codebrim_yolo.py`, `training/build_corrosion_cls.py`, TC-DATA |
 | Role separation, test-footage tool (temporary), crack models as opt-in plugins | earlier |
 
 **Blocked: needs real footage or real measurements (cannot be finished from the repository)**
@@ -66,6 +67,7 @@ Sprint 2 goal: real footage and measured accuracy, plus total cost and the compl
 | Calibrating the 2 % stock deadband, the 50 % large-drop rule and the camera-screening thresholds | Real footage from the same cameras over several days |
 | Crack model on real CCTV footage and its false alarms | Real CCTV footage |
 | 16. Teammate's trained rust and honeycomb model measured and activated | The model files from the teammate (not in the repository) |
+| Yard-material datasets from Roboflow (cement bags, sand and rock, rebar) | **Done for sand and gravel**: `piled_materials` (hand-drawn polygons) is built as `data/yard_real/piles`, 1,037 images, no SAM needed. **Blocked for cement stacks, brick stacks and rebar bundles**: the other four downloads are a person carrying a bag, a recycling conveyor and bar-end counting close-ups (`datasets.md` 4.3), so those classes still train on synthetic scenes only. Needs a different source or your own photographs. **Update: the second search found *Construction Project Monitoring* (real site photographs with all four classes); built as `data/yard_real/site`, 230 images. First real-photo evaluation of the synthetic-only `yard_seg` (`evaluate_real.py`): it fails on real frames (finds 12 % of piles, cement and rebar footprints 14 to 16 times too large, bricks 0 %); fine-tuning on the real data is the next step** |
 | Final yard model on a GPU (all data, 640 px, more epochs) | A GPU machine (about 15 hours on this laptop) |
 | 14. Docker packaging run | Docker is not installed on this machine |
 | Stage model for zone cameras (site-object segmenter) to replace colour heuristics | Real labelled zone frames; same approach as the yard model |

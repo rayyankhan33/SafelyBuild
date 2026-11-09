@@ -1,0 +1,88 @@
+{
+  "splits": [
+    "test"
+  ],
+  "datasets": {
+    "piles": {
+      "frames": 106,
+      "classes_labelled": [
+        "aggregate_pile",
+        "sand_pile"
+      ]
+    },
+    "site": {
+      "frames": 48,
+      "classes_labelled": [
+        "aggregate_pile",
+        "brick_stack",
+        "cement_bags",
+        "rebar_bundle"
+      ]
+    }
+  },
+  "classes": {
+    "sand_pile": {
+      "frames_scored": 106,
+      "frames_with_material": 55,
+      "recall": 0.018,
+      "precision": 0.5,
+      "pooled_pixel_iou": 0.0,
+      "median_frame_iou": 0.0,
+      "median_abs_area_error_pct": 94.7,
+      "median_pred_over_true_area": 0.053
+    },
+    "aggregate_pile": {
+      "frames_scored": 154,
+      "frames_with_material": 99,
+      "recall": 0.121,
+      "precision": 0.667,
+      "pooled_pixel_iou": 0.002,
+      "median_frame_iou": 0.0,
+      "median_abs_area_error_pct": 92.9,
+      "median_pred_over_true_area": 0.071
+    },
+    "pile (sand + aggregate)": {
+      "frames_scored": 154,
+      "frames_with_material": 152,
+      "recall": 0.118,
+      "precision": 0.947,
+      "pooled_pixel_iou": 0.001,
+      "median_frame_iou": 0.0,
+      "median_abs_area_error_pct": 94.3,
+      "median_pred_over_true_area": 0.057
+    },
+    "cement_bags": {
+      "frames_scored": 48,
+      "frames_with_material": 31,
+      "recall": 0.903,
+      "precision": 0.651,
+      "pooled_pixel_iou": 0.0,
+      "median_frame_iou": 0.0,
+      "median_abs_area_error_pct": 1494.7,
+      "median_pred_over_true_area": 15.947
+    },
+    "brick_stack": {
+      "frames_scored": 48,
+      "frames_with_material": 18,
+      "recall": 0.0,
+      "precision": 0.0,
+      "pooled_pixel_iou": 0.0,
+      "median_frame_iou": 0.0,
+      "median_abs_area_error_pct": null,
+      "median_pred_over_true_area": null
+    },
+    "rebar_bundle": {
+      "frames_scored": 48,
+      "frames_with_material": 17,
+      "recall": 1.0,
+      "precision": 0.354,
+      "pooled_pixel_iou": 0.012,
+      "median_frame_iou": 0.0,
+      "median_abs_area_error_pct": 1262.8,
+      "median_pred_over_true_area": 13.628
+    }
+  },
+  "weights": "yard_seg.pt",
+  "weights_sha256": "a774caa7938aa4299a14f10cff9987cab056c544b0069c402529b5bb9cf761f8",
+  "conf": 0.25
+}
