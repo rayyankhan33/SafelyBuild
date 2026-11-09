@@ -30,6 +30,7 @@ from typing import Dict, List, Tuple
 SURFACES = ("Decks", "Pavements", "Walls")
 CLASS_DIRS = (("Non-cracked", 0), ("Cracked", 1))
 IMAGE_EXTS = (".jpg", ".jpeg", ".png")
+MANY_FULL_PHOTOS = 20      # per surface: at or above this many photographs with both classes, split them proportionally
 
 
 @dataclass(frozen=True)
@@ -93,9 +94,17 @@ def split_by_photo(samples: List[Sample], seed: int = 42,
         only = sorted(g for g in by_group if g[0] == surface and classes_of[g] != {0, 1})
         rng.shuffle(full)
         rng.shuffle(only)
-        # fully labelled photographs: test, val, then the rest train (needs >= 3 to cover all splits)
-        for i, g in enumerate(full):
-            assignment[g] = "test" if i == 0 else "val" if i == 1 else "train"
+        if len(full) >= MANY_FULL_PHOTOS:
+            # the complete dataset (about 75 fully labelled photographs per surface): split them in proportion, so the
+            # test score rests on dozens of photographs and not on one
+            n_val_f = max(1, round(len(full) * frac[1]))
+            n_test_f = max(1, round(len(full) * frac[2]))
+            for i, g in enumerate(full):
+                assignment[g] = "test" if i < n_test_f else "val" if i < n_test_f + n_val_f else "train"
+        else:
+            # a small copy (13 photographs in the repo's subset): test, val, then the rest train (needs >= 3 to cover all splits)
+            for i, g in enumerate(full):
+                assignment[g] = "test" if i == 0 else "val" if i == 1 else "train"
         n_val = max(1, round(len(only) * frac[1]))
         n_test = max(1, round(len(only) * frac[2]))
         for i, g in enumerate(only):
