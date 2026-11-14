@@ -154,6 +154,21 @@ Reading it:
 
 **Limits.** The test frames come from the same two public datasets as the training frames, so they are more alike than a new yard would be; the site set covers only a handful of building sites; the brick, cement and rebar masks of the site set were produced by SAM from boxes (auto-labelled), so the model is scored against those masks, not hand-drawn outlines; and the step from footprint area to bags or cubic metres is still the uncalibrated geometry of `scene.py`. The model stays opt-in and `unvalidated` until it is measured on your own yard with a counted stack.
 
+### 4.7 Defects detector on CODEBRIM (2026-11-09 to 11-14)
+
+`training/train_defects.py` fine-tuned the COCO-pretrained YOLO11n detector (`yolo11n.pt`, 5.6 MB, Ultralytics) on `data/codebrim_platform` (the platform scheme of `build_codebrim_yolo.py`: concrete_crack, rusted_rebar, spalling): 855 training photographs, 25 epochs at 640 px, about 11 minutes per epoch on the CPU when nothing interferes (epochs 9 to 12 took about 27 minutes while the machine was short of memory; the machine then slept during epoch 25 and the run was resumed from the epoch 24 checkpoint with `--resume`). The `val` split (90 photographs) chose the checkpoint (epoch 25, validation mAP50 0.425). The `test` split (106 photographs) was used once, for the numbers below. Nothing was installed: the weights are in `runs/defects_det/weights/best.pt` (not committed).
+
+Held-out `test` split, boxes counted as correct at IoU 0.5:
+
+| Class | Test images | Instances | Precision | Recall | mAP50 |
+|---|---|---|---|---|---|
+| concrete_crack | 59 | 194 | 0.25 | 0.20 | **0.14** |
+| rusted_rebar | 66 | 198 | 0.41 | 0.54 | **0.47** |
+| spalling | 53 | 178 | 0.36 | 0.46 | **0.36** |
+| all | 106 | 570 | 0.34 | 0.40 | 0.32 |
+
+Reading it: a baseline, not a product. Rust and spalling are found about half the time with 1 detection in 3 to 5 wrong; cracks are found in about 1 box in 5, so keep using the crack classifier (`crack-model.md`) for cracks. Thin cracks probably disappear when 1,280 px photographs are trained at 640 px; a 1,280 px run is about four times slower and needs a GPU. The test score is below the validation score (0.32 against 0.43) because the validation split picked the checkpoint and both splits are small. `rusted_rebar` merges corrosion stains and exposed bars on an assumption an engineer must confirm. The detector's box scores are not comparable with the classifier's image-level numbers (the classifier finds 73 % of cracked CODEBRIM images at its default threshold).
+
 ## 5. Honest limits and what to do
 
 - **These datasets teach recognition, not measurement.** None has a known quantity, a camera scale or a delivery record. They can improve how well the model finds a pile or a stack; the number of bags or cubic metres still depends on the geometry constants and a calibrated yard, which need your own camera and a counted stack.
@@ -162,4 +177,4 @@ Reading it:
 - **Licences.** The Roboflow sets are CC BY 4.0 (cite them). Several academic ones are non-commercial or no-derivatives; check before any commercial use.
 - **Evaluation discipline.** Keep one split that is never trained on (CODEBRIM `test`, and a held-out set of real yard frames).
 
-Recommended order: (1) retrain the crack classifier on full SDNET2018 and evaluate on CODEBRIM `test`; (2) train the defects detector on `codebrim_platform` (a GPU is advisable: about 1,000 images at 1280 px); (3) **done 2026-11-09**: `yard_seg` fine-tuned on `data/yard_real/piles` and `site` mixed with synthetic scenes (4.6); (4) collect real yard frames with known quantities for the evaluation that matters.
+Recommended order: (1) retrain the crack classifier on full SDNET2018 and evaluate on CODEBRIM `test`; (2) **done 2026-11-14**: defects detector trained on `codebrim_platform` at 640 px (4.7); a 1,280 px run would need a GPU; (3) **done 2026-11-09**: `yard_seg` fine-tuned on `data/yard_real/piles` and `site` mixed with synthetic scenes (4.6); (4) collect real yard frames with known quantities for the evaluation that matters.
