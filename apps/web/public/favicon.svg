@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="t">
+  <title id="t">SafelyBuild</title>
+  <rect width="512" height="512" rx="112" fill="#0f2d4a"/>
+  <!-- safety shield -->
+  <path d="M256 72 L420 128 V256 C420 346 354 410 256 442 C158 410 92 346 92 256 V128 Z" fill="#ffffff"/>
+  <!-- camera lens watching from the top -->
+  <circle cx="256" cy="158" r="32" fill="#0f2d4a"/>
+  <circle cx="256" cy="158" r="13" fill="#f59e0b"/>
+  <circle cx="249" cy="151" r="4" fill="#ffffff"/>
+  <!-- building frame: two columns, three floors, one brace -->
+  <g stroke="#f59e0b" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M198 232 V368 M314 232 V368"/>
+    <path d="M170 232 H342 M170 300 H342 M170 368 H342"/>
+    <path d="M198 368 L314 300"/>
+  </g>
+</svg>
