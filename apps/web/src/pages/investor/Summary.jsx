@@ -2,8 +2,9 @@
 import { Alerts, Badge, Kpi } from '../../components.jsx';
 import { dateText, pkr } from '../../api.js';
 import { Footnote, NotReady } from './Shared.jsx';
+import { BriefCard } from '../../components/Assistant.jsx';
 
-export default function Summary({ data, go }) {
+export default function Summary({ data, go, pid, agent }) {
   if (!data.setup_complete) return <NotReady data={data} />;
   const h = data.headline; const b = h.budget; const s = h.schedule;
   return (
@@ -25,6 +26,7 @@ export default function Summary({ data, go }) {
           <button className="link" onClick={() => go('safety')}>Safety issues →</button>
         </div>
       </div>
+      {agent?.enabled && <div style={{ marginTop: 16 }}><BriefCard pid={pid} staff={false} /></div>}
       <Footnote data={data} />
     </>
   );

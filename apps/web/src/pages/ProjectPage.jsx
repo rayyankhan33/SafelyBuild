@@ -22,6 +22,7 @@ import Cameras from './admin/Cameras.jsx';
 import PriceBook from './admin/PriceBook.jsx';
 import Access from './admin/Access.jsx';
 import Audit from './admin/Audit.jsx';
+import { AiActivity, AssistantPanel, useAgentStatus } from '../components/Assistant.jsx';
 
 const TABS = {
   investor: [['summary', 'Summary'], ['budget', 'Budget'], ['progress', 'Progress & schedule'], ['safety', 'Safety'], ['photos', 'Site photos']],
@@ -32,10 +33,12 @@ const TABS = {
 export default function ProjectPage() {
   const { id } = useParams();
   const role = session.get().user.role;
-  const tabs = TABS[role];
+  const agent = useAgentStatus(id);
+  // the AI tabs appear only when the assistant is switched on (AGENT_ENABLED=1 on the API)
+  const tabs = agent?.enabled ? [...TABS[role], role === 'admin' ? ['ai', 'AI activity'] : ['assistant', 'AI assistant']] : TABS[role];
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  const [tab, setTab] = useState(tabs[0][0]);
+  const [tab, setTab] = useState(TABS[role][0][0]);
 
   const reload = useCallback(async () => {
     try { setData(await api('GET', `/projects/${id}/dashboard`)); setError(''); } catch (e) { setError(e.message); }
@@ -57,7 +60,8 @@ export default function ProjectPage() {
         <Link to="/">← Projects</Link>
         <div style={{ marginTop: 8 }}><InvestorHeader data={data} /></div>
         {nav}
-        {tab === 'summary' && <InvSummary data={data} go={setTab} />}
+        {tab === 'summary' && <InvSummary data={data} go={setTab} pid={id} agent={agent} />}
+        {tab === 'assistant' && <AssistantPanel pid={id} role={role} status={agent} />}
         {tab === 'budget' && <InvBudget data={data} />}
         {tab === 'progress' && <InvProgress data={data} pid={id} />}
         {tab === 'safety' && <InvSafety data={data} />}
@@ -88,9 +92,10 @@ export default function ProjectPage() {
         <>
           {tab === 'overview' && <Overview data={data} />}
           {tab === 'design' && <Design pid={id} data={data} reload={reload} />}
-          {tab === 'schedule' && <Schedule pid={id} data={data} reload={reload} />}
+          {tab === 'schedule' && <Schedule pid={id} data={data} reload={reload} agent={agent} />}
           {tab === 'site' && <SiteStatus pid={id} reload={reload} />}
-          {tab === 'evidence' && <Evidence pid={id} data={data} />}
+          {tab === 'evidence' && <Evidence pid={id} data={data} agent={agent} />}
+          {tab === 'assistant' && <AssistantPanel pid={id} role={role} status={agent} />}
           {tab === 'risk' && <Risk data={data} />}
           {tab === 'testing' && <TestFootage pid={id} />}
         </>
@@ -102,6 +107,7 @@ export default function ProjectPage() {
           {tab === 'prices' && <PriceBook />}
           {tab === 'access' && <Access pid={id} />}
           {tab === 'audit' && <Audit pid={id} />}
+          {tab === 'ai' && <AiActivity pid={id} />}
         </>
       )}
     </>

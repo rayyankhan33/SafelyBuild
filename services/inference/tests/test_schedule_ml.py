@@ -1,4 +1,4 @@
-"""Tests of the synthetic dataset, the ML refinement, the blend and the fallback rules (HANDOFF.md T2-T6)."""
+"""Tests of the synthetic dataset, the ML refinement, the blend and the fallback rules (docs/handoff-schedule-assistant.md T2-T6)."""
 import pathlib
 import sys
 from dataclasses import replace

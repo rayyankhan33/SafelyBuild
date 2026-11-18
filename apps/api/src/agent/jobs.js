@@ -1,7 +1,13 @@
 // The four agent jobs: what each is for, who may start it, which tools it gets, and its instructions.
-// (HANDOFF.md part B.) The definitions and prompts are final drafts; runJob and the triggers are stubs.
+// (docs/handoff-schedule-assistant.md part B.) runJob runs one job in a read-only transaction and stores it in agent_runs; the two triggers start the automatic jobs.
 
-const todo = (what) => { throw new Error(`TODO(opus): ${what}`); };
+import { config } from '../config.js';
+import { pool as appPool } from '../db/pool.js';
+import { today } from '../domain/dates.js';
+import { checkGrounding } from './grounding.js';
+import { createProvider, LlmError } from './llm.js';
+import { runAgent } from './loop.js';
+import { executeTool, toolsForRole, withReadOnly } from './tools.js';
 
 // Shared by every job. Kept short on purpose: rules the model must not break come first.
 export const SYSTEM_BASE = `You are the SafelyBuild assistant for one construction project.
@@ -69,49 +75,212 @@ export function systemPrompt(job, role) {
   return `${SYSTEM_BASE}\n\n${AUDIENCE[role]}\n\nTask: ${JOBS[job].prompt}`;
 }
 
-/**
- * Run one job end to end and store the run.
- *
- * @param {object} deps   { pool, provider, config: config.agent }
- * @param {object} input  { job, project, user: {id, role} | null (system runs: use role of the audience),
- *                          audience: 'engineer'|'admin'|'investor', asOf, message (chat question or trigger
- *                          reason), history (earlier chat messages, max 10), conversationId }
- * @returns the stored agent_runs row: { id, status, answer, grounding, steps, usage, ... }
- *
- * Steps:
- *  1. refuse when config.enabled is false, or the daily run limit (config.dailyRunLimit per project) is hit
- *  2. tools = toolsForRole(audience, JOBS[job].tools); system = systemPrompt(job, audience)
- *  3. withReadOnly(pool, client => runAgent({ provider, system, messages: [...history, {role:'user', text: message}],
- *       tools, executeTool: call => executeTool({db: client, project, user: {id, role: audience}, asOf}, call, JOBS[job].tools),
- *       maxSteps: JOBS[job].maxSteps }))
- *  4. grounding = checkGrounding(answer, toolResults). Investor audience and not grounded: do not show the
- *     text; store it, set status 'withheld', and return the deterministic narrative instead (G5).
- *  5. INSERT into agent_runs OUTSIDE the read-only transaction (provider name, model, key index only, never a key).
- *  6. LlmError (provider down, all keys rate-limited): store status 'failed' with the message; never throw
- *     into recompute() or ingest. Chat returns HTTP 503 with a plain message.
- * Acceptance: tests with MockProvider for answered, withheld (investor, ungrounded), failed, disabled, limit.
- */
-export async function runJob(_deps, _input) {
-  todo('implement runJob as described in its docstring (task B3)');
+// ------------------------------------------------------------------------------------------ running
+export class AgentError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+let cachedProvider = null;
+/** The configured provider, created once (tests pass their own in deps.provider). */
+export function defaultProvider() {
+  cachedProvider ??= createProvider(config.agent);
+  return cachedProvider;
+}
+/** Forget the cached provider (tests, or after changing config.agent). */
+export function resetProvider() { cachedProvider = null; }
+/** Use a specific provider for every run (tests inject a scripted MockProvider). */
+export function useProvider(p) { cachedProvider = p; }
+
+const inflight = new Set();
+/** Background agent work started by triggers; tests await it. */
+export function pendingAgentWork() { return Promise.allSettled([...inflight]); }
+function background(promise) {
+  const p = promise.catch((e) => console.warn(`[agent] background run failed: ${e.message}`)).finally(() => inflight.delete(p));
+  inflight.add(p);
+  return p;
+}
+
+const VERDICT = /VERDICT:\s*(plausible|doubtful|needs human review)/i;
+export function parseVerdict(text) {
+  const m = VERDICT.exec(text ?? '');
+  if (!m) return null;
+  const v = m[1].toLowerCase();
+  return v === 'needs human review' ? 'needs_review' : v;
+}
+
+async function conversationHistory(db, conversationId, projectId, userId) {
+  if (!conversationId) return [];
+  const { rows } = await db.query(
+    `SELECT question, answer FROM agent_runs WHERE conversation_id = $1 AND project_id = $2 AND started_by = $3
+       AND status IN ('answered', 'step_limit', 'deadline') ORDER BY created_at DESC LIMIT 5`, [conversationId, projectId, userId]);
+  return rows.reverse().flatMap((r) => [{ role: 'user', text: r.question }, { role: 'assistant', text: r.answer, toolCalls: [] }]);
 }
 
 /**
- * Trigger for daily_analyst (G6). Called at the end of recompute() WITHOUT await-ing the model:
- * `void maybeRunDailyAnalyst(...).catch(log)`. Runs only when the agent is enabled, alerts were opened or
- * resolved in this recompute (diffAlerts result non-empty), and no daily_analyst run exists yet for
- * (project, as_of, audience). Creates one run per audience (engineer, investor) and one notification per
- * project member of that audience: kind 'ai_brief', title 'AI site brief', body = first 300 characters.
+ * Run one job end to end and store the run (decisions G1-G14).
+ *
+ * @param {object} deps   { pool, provider } (both optional: defaults are the app pool and the configured model)
+ * @param {object} input  { job, project, user: {id, role} | null (system), audience, asOf, message,
+ *                          conversationId, mediaId }
+ * @returns the stored agent_runs row. Throws AgentError when the assistant is off, the role may not use the job,
+ *          or the daily limit is reached. A model failure is stored with status 'failed' and returned, not thrown.
  */
-export async function maybeRunDailyAnalyst(_deps, _project, _asOf, _alertChanges) {
-  todo('implement the daily analyst trigger with the once-per-day guard (task B7)');
+export async function runJob(deps, input) {
+  const pool = deps.pool ?? appPool;
+  const cfg = config.agent;
+  const { job, project, user = null, asOf = today(), message = '', conversationId = null, mediaId = null } = input;
+  const audience = input.audience ?? (user?.role === 'admin' ? 'admin' : user?.role) ?? 'engineer';
+  if (!cfg.enabled) throw new AgentError(404, 'agent_disabled', 'the AI assistant is not enabled on this server');
+  if (!JOBS[job]) throw new AgentError(422, 'unknown_job', `unknown job "${job}"`);
+  if (!JOBS[job].reportRoles.includes(audience)) throw new AgentError(403, 'forbidden', 'this assistant feature is not available to your role');
+  const used = (await pool.query('SELECT count(*)::int AS n FROM agent_runs WHERE project_id = $1 AND as_of = $2', [project.id, asOf])).rows[0].n;
+  if (used >= cfg.dailyRunLimit) throw new AgentError(429, 'agent_daily_limit', `the assistant has reached its limit of ${cfg.dailyRunLimit} runs for this project today`);
+
+  let provider;
+  try { provider = deps.provider ?? defaultProvider(); } catch (e) { throw new AgentError(503, 'agent_unavailable', e.message); }
+  const inserted = (await pool.query(
+    `INSERT INTO agent_runs (project_id, job, audience, started_by, conversation_id, as_of, media_id, status, question, provider, model)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8,$9,$10) ON CONFLICT DO NOTHING RETURNING id`,
+    [project.id, job, audience, user?.id ?? null, conversationId, asOf, mediaId, message, provider.name, provider.model])).rows[0];
+  if (!inserted) {
+    // daily brief or triage already exists for this day / frame: return that one instead of running again
+    const existing = (await pool.query(
+      `SELECT * FROM agent_runs WHERE project_id = $1 AND job = $2 AND status <> 'failed' AND
+         ((job = 'daily_analyst' AND as_of = $3 AND audience = $4) OR (job = 'evidence_triage' AND media_id = $5))
+       ORDER BY created_at DESC LIMIT 1`, [project.id, job, asOf, audience, mediaId])).rows[0];
+    return existing && { ...existing, reused: true };
+  }
+  const runId = inserted.id;
+
+  const allow = JOBS[job].tools;
+  const tools = toolsForRole(audience, allow);
+  const system = `${systemPrompt(job, audience)}\n\nProject: "${project.name}". Today is ${asOf}. Use YYYY-MM-DD dates from the tools when you give dates.`;
+  const history = job === 'chat' ? await conversationHistory(pool, conversationId, project.id, user?.id) : [];
+  let out; let error = null;
+  try {
+    out = await withReadOnly(pool, (client) => runAgent({
+      provider, system, tools,
+      messages: [...history, { role: 'user', text: message || 'Start.' }],
+      executeTool: (call) => executeTool({ db: client, project, user: { id: user?.id ?? null, role: audience }, asOf, savepoints: true, counters: {} }, call, allow),
+      maxSteps: JOBS[job].maxSteps,
+    }));
+  } catch (e) {
+    if (!(e instanceof LlmError)) console.warn(`[agent] ${job} run failed: ${e.stack ?? e.message}`);
+    error = e instanceof LlmError ? e.message : `assistant error: ${e.message}`;
+  }
+
+  let status; let grounding = null; let verdict = null;
+  if (error) status = 'failed';
+  else {
+    grounding = checkGrounding(out.answer, out.toolResults);
+    verdict = job === 'evidence_triage' ? parseVerdict(out.answer) ?? 'needs_review' : null;
+    status = audience === 'investor' && !grounding.grounded ? 'withheld' : out.status;
+    if (!out.answer) { status = 'failed'; error = 'the model returned an empty answer'; }
+  }
+  const row = (await pool.query(
+    `UPDATE agent_runs SET status = $2, answer = $3, verdict = $4, steps = $5, grounding = $6, key_index = $7,
+       input_tokens = $8, output_tokens = $9, error = $10, finished_at = now() WHERE id = $1 RETURNING *`,
+    [runId, status, out?.answer ?? null, verdict, JSON.stringify(out?.steps ?? []), grounding, provider.lastKeyIndex ?? null,
+      out?.usage.input_tokens ?? 0, out?.usage.output_tokens ?? 0, error])).rows[0];
+  return row;
+}
+
+const NO_SUMMARY = 'The AI summary is not available right now. The figures on this page are the reliable ones.';
+
+/** A stored run as the API shows it to `role`: investors never see withheld text, grounding details or internals. */
+export function publicRun(row, role) {
+  if (!row) return null;
+  const tools = [...new Set((row.steps ?? []).flatMap((s) => s.tool_calls.map((c) => c.name)))];
+  const base = {
+    id: row.id, job: row.job, title: JOBS[row.job]?.title, status: row.status, as_of: row.as_of, created_at: row.created_at,
+    question: row.started_by ? row.question : null, conversation_id: row.conversation_id,
+    answer: row.status === 'withheld' || row.status === 'failed' ? null : row.answer,
+    notice: row.status === 'withheld' ? NO_SUMMARY : row.status === 'failed' ? `The assistant could not answer: ${row.error ?? 'unknown error'}` : null,
+    ai_label: 'AI-generated. Check it against the figures on the dashboard.',
+    model: `${row.provider}/${row.model}`,
+  };
+  if (role === 'investor') return base;
+  return {
+    ...base, verdict: row.verdict, media_id: row.media_id, tools_used: tools, grounding: row.grounding,
+    answer: row.status === 'failed' ? null : row.answer,   // staff see withheld text, with its grounding warning
+    ...(role === 'admin' ? { audience: row.audience, steps: row.steps, input_tokens: row.input_tokens, output_tokens: row.output_tokens,
+      key_index: row.key_index, error: row.error, question: row.question, finished_at: row.finished_at } : {}),
+  };
+}
+
+// ------------------------------------------------------------------------------------------ triggers
+async function notify(db, project, roles, { kind, title, body }) {
+  await db.query(
+    `INSERT INTO notifications (org_id, user_id, kind, title, body, project_id)
+     SELECT $1, u.id, $2, $3, $4, $5 FROM project_members pm JOIN users u ON u.id = pm.user_id
+     WHERE pm.project_id = $5 AND u.is_active AND u.role = ANY($6)`,
+    [project.org_id, kind, title, body, project.id, roles]);
 }
 
 /**
- * Trigger for evidence_triage (G7). Called from ingest after a frame is stored, not awaited. A frame is
- * doubtful when: camera health flags are present; or a stage observation is lower than the camera's
- * confirmed stage; or a large one-day stock drop is pending confirmation. At most config.triagePerDay runs
- * per project per day. The verdict is stored in agent_runs and shown on the engineer Evidence page.
+ * Daily site analyst (G6). Called at the end of recompute() and NOT awaited. Runs only when the assistant and
+ * daily briefs are enabled, alerts were opened or resolved in this recompute, and no brief exists yet for
+ * (project, day, audience): one brief for engineers (technical) and one for investors (plain words).
  */
-export async function maybeTriageFrame(_deps, _project, _mediaId, _reason) {
-  todo('implement the evidence triage trigger with the per-day cap (task B8)');
+export function maybeRunDailyAnalyst(deps, project, asOf, alertChanges) {
+  const cfg = config.agent;
+  if (!cfg.enabled || !cfg.dailyBriefs || !alertChanges) return null;
+  if (!alertChanges.opened.length && !alertChanges.resolved) return null;
+  return background((async () => {
+    const pool = deps.pool ?? appPool;
+    for (const audience of ['engineer', 'investor']) {
+      const exists = (await pool.query(
+        `SELECT 1 FROM agent_runs WHERE project_id = $1 AND job = 'daily_analyst' AND as_of = $2 AND audience = $3 AND status <> 'failed'`,
+        [project.id, asOf, audience])).rowCount;
+      if (exists) continue;
+      const opened = alertChanges.opened.length ? `New alerts today: ${alertChanges.opened.join(', ')}.` : '';
+      const resolved = alertChanges.resolved ? ` ${alertChanges.resolved} alert(s) were resolved.` : '';
+      const run = await runJob(deps, { job: 'daily_analyst', project, audience, asOf, message: `Write the site brief for ${asOf}. ${opened}${resolved}`.trim() });
+      if (run?.status && !run.reused && !['failed', 'withheld'].includes(run.status)) {
+        await notify(pool, project, audience === 'engineer' ? ['engineer'] : ['investor'], {
+          kind: 'ai_brief', title: 'AI site brief', body: (run.answer ?? '').slice(0, 300),
+        });
+      }
+    }
+  })());
+}
+
+/**
+ * Evidence triage (G7). Called after a frame is ingested and NOT awaited. A frame is doubtful when the camera
+ * screening flagged it, or when its stage is lower than a stage this camera already reported. At most
+ * config.agent.triagePerDay runs per project per day. Advice only: the stored measurement is never changed.
+ */
+export function maybeTriageFrame(deps, project, camera, ingestResult) {
+  const cfg = config.agent;
+  if (!cfg.enabled || !cfg.triage || !ingestResult?.media_id) return null;
+  return background((async () => {
+    const pool = deps.pool ?? appPool;
+    let reason = null;
+    if (ingestResult.health?.flags?.length) reason = `camera screening flagged the frame as ${ingestResult.health.flags.join(', ')}`;
+    const stage = ingestResult.analysis?.stage;
+    if (!reason && stage?.status === 'succeeded' && camera.kind === 'zone') {
+      const prev = (await pool.query(
+        `SELECT max(so.stage) AS max FROM stage_observations so JOIN inference_runs r ON r.id = so.inference_run_id
+         WHERE so.camera_id = $1 AND r.media_id <> $2`, [camera.id, ingestResult.media_id])).rows[0].max;
+      if (prev !== null && stage.stage < prev) reason = `the frame shows stage ${stage.stage}, lower than stage ${prev} this camera already reported`;
+    }
+    if (!reason) return null;
+    const today = (await pool.query(
+      `SELECT count(*)::int AS n FROM agent_runs WHERE project_id = $1 AND job = 'evidence_triage' AND as_of = $2`, [project.id, ingestResult.date])).rows[0].n;
+    if (today >= cfg.triagePerDay) return null;
+    const run = await runJob(deps, {
+      job: 'evidence_triage', project, audience: 'engineer', asOf: ingestResult.date, mediaId: ingestResult.media_id,
+      message: `Frame ${ingestResult.media_id} from camera "${camera.name}" was marked doubtful: ${reason}.`,
+    });
+    if (run?.verdict && !run.reused && run.verdict !== 'plausible' && run.status !== 'failed') {
+      await notify(pool, project, ['engineer'], {
+        kind: 'ai_triage', title: 'AI evidence check', body: `Camera "${camera.name}": ${run.verdict === 'doubtful' ? 'measurement looks doubtful' : 'needs a human look'}. ${reason}.`.slice(0, 300),
+      });
+    }
+    return run;
+  })());
 }

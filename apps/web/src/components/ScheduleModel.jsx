@@ -1,4 +1,4 @@
-// Engineer view: model-based completion forecast beside the earned-value one (HANDOFF.md part A, T8).
+// Engineer view: model-based completion forecast beside the earned-value one (docs/handoff-schedule-assistant.md part A, T8).
 // Shows EVM / baseline / ML / blend side by side, a progress chart with the forecast fan, an explanation of
 // how the numbers were reached, and a what-if pace slider. Investors never see this panel.
 import { useEffect, useMemo, useRef, useState } from 'react';

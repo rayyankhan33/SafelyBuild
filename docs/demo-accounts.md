@@ -27,6 +27,10 @@ The demo project "Margalla Heights - Residential Block A" is flagged **demo**: i
 - Evidence: cameras and their health, latest frames and what was measured.
 - Risk & safety: read-only danger index breakdown, risk matrix, hazards (categories, ALARP zone, bow-tie, automatic closing).
 
+**Completion forecast** (engineer, Schedule tab): the "Model forecast (experimental)" panel shows the earned-value date beside the baseline, ML and blended forecasts, a chart with the likely finish range, "Explain this forecast", and a pace slider ("what if the pace is 20 % faster?").
+
+**AI assistant** (only when the server has `AGENT_ENABLED=1`; see [assistant.md](assistant.md)): an "AI assistant" tab for the engineer and the investor (daily brief and questions), "Suggest recovery options" on the engineer's Schedule tab while the schedule is behind, "AI checks of doubtful frames" on the Evidence tab, the brief on the investor Summary, and an "AI activity" tab for the admin. Try asking: "Why are we behind schedule?", "What if we add a crew?", or (as the investor) "When will the building be finished?".
+
 **Administrator** (signed in as Demo Admin): sees every project but has no "start a new project" form. Extras: the **Accounts** page (create and delete accounts; no delete button on your own row), an **Access** tab on each project (add or remove who can see it), "Install a camera" in the Evidence tab (the key is shown once), an editable price book, and the **bell** in the top bar.
 
 **Try the notification:** sign in as the engineer and create a project; then sign in as the admin: the bell shows an unread count and a "New project created" message naming the engineer and the project (clicking it opens the project). The demo already contains one, for the seeded project.

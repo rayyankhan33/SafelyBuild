@@ -29,10 +29,10 @@ async function call(path, form, query = '', headers = undefined) {
 
 const blob = (buf, type) => new Blob([buf], { type: type || 'application/octet-stream' });
 
-export function analyseDefects(buf, contentType, { minViolation = 'Medium' } = {}) {
+export function analyseDefects(buf, contentType, { minViolation = 'Medium', backend = null } = {}) {
   const f = new FormData();
   f.append('image', blob(buf, contentType), 'upload');
-  return call('/v1/defects', f, `?min_violation=${encodeURIComponent(minViolation)}`);
+  return call('/v1/defects', f, `?min_violation=${encodeURIComponent(minViolation)}${backend ? `&backend=${encodeURIComponent(backend)}` : ''}`);
 }
 
 export function analyseActivity(prevBuf, prevType, currBuf, currType) {
@@ -42,10 +42,10 @@ export function analyseActivity(prevBuf, prevType, currBuf, currType) {
   return call('/v1/activity', f);
 }
 
-export function analyseStage(buf, contentType, elementType) {
+export function analyseStage(buf, contentType, elementType, { backend = null } = {}) {
   const f = new FormData();
   f.append('image', blob(buf, contentType), 'frame');
-  return call('/v1/stage', f, `?element_type=${encodeURIComponent(elementType)}`);
+  return call('/v1/stage', f, `?element_type=${encodeURIComponent(elementType)}${backend ? `&backend=${encodeURIComponent(backend)}` : ''}`);
 }
 
 export function analyseInventory(buf, contentType, scaleMPerPx) {
@@ -63,7 +63,7 @@ export function analyseHealth(buf, contentType, refs = []) {
 }
 
 /**
- * Completion forecast from a percent-complete history (services/inference/schedule_forecast, HANDOFF.md section 4).
+ * Completion forecast from a percent-complete history (services/inference/schedule_forecast, docs/handoff-schedule-assistant.md section 4).
  * payload: {start_date, as_of, observations: [{day, pct}], planned_duration_days?, planned_pct_now?, floors?, pace_factor?}
  * Resolves to {baseline, ml, blend, model_version}. Throws InferenceError like every other call.
  */

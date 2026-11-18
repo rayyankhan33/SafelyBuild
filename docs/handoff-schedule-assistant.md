@@ -1,45 +1,6 @@
 # HANDOFF: schedule prediction (S-curve baseline + ML refinement)
 
-> **Progress 2026-11-17 (Opus 5.5).** Part A is DONE: T1-T8 are implemented and tested (API 232/232, inference 220 passed + 1 skipped).
-> Model: `services/inference/models/schedule_gbm_sched-gbm-0.1.0-seed0.joblib`. Results: `models/schedule_gbm_eval.json`.
-> Changes from the plan:
-> - The baseline gained an **earned-schedule leg** (Lipke SPI(t); share fixed at 85 %, tuned on validation).
-> - The window is 42 days; the interval scale is 2.7 (both tuned on validation).
-> - A 13th feature `es_remaining` was added.
-> - Training hides the floor count for 1/3 of projects, because the platform's BOQ has no floor count.
-> - Photo gaps in the synthetic data are 1-14 days.
->
-> Held-out MAE in days at 20/40/60/80 % progress (test projects, synthetic data):
->
-> | Method | 20 % | 40 % | 60 % | 80 % |
-> |---|---|---|---|---|
-> | Baseline | 63 | 48 | 32 | 24 |
-> | ML | 54 | 40 | 29 | 20 |
-> | Blend | 53 | 40 | 28 | 20 |
-> | EVM rule | 103 | 51 | 46 | 63 |
->
-> **Still to do:**
-> - `docs/schedule-forecast-eval.md` from that JSON.
-> - Doc updates (T10).
-> - Optional T9 rework risk.
-> - All of Part B (B1-B12; only the scaffold exists).
->
-> **Part B notes from the Gemini docs (read 2026-11-17):**
-> - Send the model's previous `content.parts` back unchanged, including `thoughtSignature`.
-> - Function results go back as a `user`-role `functionResponse` part, echoing the call's `id`.
-> - Schema types are uppercase (`OBJECT`, `STRING`).
-> - Use `toolConfig.functionCallingConfig.mode = 'NONE'` for the forced final answer; keep the tools declared.
-> - Model options: `gemini-3.5-flash-lite` (fast) or `gemini-3.8-flash` (better at agentic work). `gemini-2.5-flash` routes to 3.5-flash-lite from 2026-12-01. Check free-tier access in AI Studio.
->
-> **Gotcha:** `get_dashboard` calls `recompute()`, which writes. It will fail inside `withReadOnly`. Add a `persist: false` option to `recompute()` and `buildDashboard()`.
->
-> **Dev setup:**
-> - Database: `PGPORT=5433 node scripts/dev-db.mjs` (worktree `.pgdata`); `.env` points there.
-> - Python: the main checkout's venv. scipy, scikit-learn and joblib were added to it.
-
-
-Branch `feature/schedule-forecast` (worktree `.worktrees/schedule-forecast`, cut from `origin/main` 24bc1ed).
-Written by the planning model for the implementing model. Grep `TODO(opus)` for every stub.
+> **Status 2026-11-18: COMPLETE.** Both parts are implemented, tested and documented. This file is kept as the design record of how they were planned; where the build differs from the plan, the current documents win: [schedule-forecast.md](schedule-forecast.md) (method and results), [assistant.md](assistant.md) (agent design, setup, guardrails), [agent-eval.md](agent-eval.md) (real-model evaluation). Main changes from the plan: an earned-schedule leg in the baseline; floors missing for a third of training projects; a read-only mode for recompute so the tools work in a read-only transaction; an offline provider; written-date handling in the number check.
 
 **Two features are planned here.** Part A (sections 0-9): schedule prediction. Part B (section 10): the agentic AI
 assistant. Do Part A tasks T1-T7 first; `whatif_pace` in Part B needs T7.

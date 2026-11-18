@@ -1,4 +1,4 @@
-// Input for the model-based completion forecast (inference service /v1/schedule/forecast, HANDOFF.md part A).
+// Input for the model-based completion forecast (inference service /v1/schedule/forecast, docs/handoff-schedule-assistant.md part A).
 //
 // The earned-value forecast in evm.js stays the headline number. This module only reshapes what evaluate()
 // already computed into the service's input: progress = EV / BAC per log date, the plan = PV / BAC per day.

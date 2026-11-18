@@ -2,7 +2,7 @@
 models.py - data classes and constants shared by the schedule forecast modules.
 
 Every number that shapes a forecast is a named constant here, so it can be tuned in one place and
-quoted in the report. Decision ids (D3, D7, ...) refer to HANDOFF.md section 2.
+quoted in the report. Decision ids (D3, D7, ...) refer to docs/handoff-schedule-assistant.md section 2.
 """
 
 from __future__ import annotations

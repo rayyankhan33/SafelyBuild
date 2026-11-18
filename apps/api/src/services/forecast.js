@@ -14,6 +14,7 @@ import { siteDate } from './ingest.js';
 import crypto from 'node:crypto';
 import { schedulePayload, forecastChart } from '../domain/schedulemodel.js';
 import { InferenceError, scheduleForecast } from '../inference.js';
+import { maybeRunDailyAnalyst } from '../agent/jobs.js';
 
 export async function loadState(db, project) {
   const q = (text, params = [project.id]) => db.query(text, params).then((r) => r.rows);
@@ -72,7 +73,7 @@ export function evidenceState(state, project, asOf) {
 }
 
 /** Recompute and persist forecast + risk score + alerts. Returns everything the dashboards need. */
-export async function recompute(db, project, asOf = today()) {
+export async function recompute(db, project, asOf = today(), { persist = true } = {}) {
   const state = await loadState(db, project);
   if (!state.tasks.length || !project.planned_end_date) return { ready: false, reason: 'no schedule yet', state };
 
@@ -86,7 +87,9 @@ export async function recompute(db, project, asOf = today()) {
   const safety = overallSafety(sdi, state.hazards, evidence.summary.gap);
 
   const payload = schedulePayload(project, ev, asOf);
-  const scheduleModel = await modelForecast(db, project, asOf, payload);
+  const scheduleModel = persist ? await modelForecast(db, project, asOf, payload)
+    : (await db.query('SELECT schedule_model FROM forecasts WHERE project_id = $1 AND as_of = $2', [project.id, asOf])).rows[0]?.schedule_model ?? null;
+  if (!persist) return readOnlyResult();
   await db.query(
     `INSERT INTO forecasts (project_id, as_of, budget, schedule, schedule_model) VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (project_id, as_of) DO UPDATE SET budget = EXCLUDED.budget, schedule = EXCLUDED.schedule,
@@ -104,16 +107,7 @@ export async function recompute(db, project, asOf = today()) {
 
   // completion lifecycle per task (D4): evidence-driven warnings after the work is placed
   const elementType = Object.fromEntries((await db.query('SELECT id, element_type FROM design_elements WHERE project_id = $1', [project.id])).rows.map((e) => [e.id, e.element_type]));
-  const lifecycle = state.tasks.map((t) => {
-    const cam = state.cameras.find((c) => c.kind === 'zone' && c.active && c.element_id === t.element_id);
-    return { task_id: t.id, name: t.name, seq: t.seq, ...taskLifecycle({
-      task: t, elementType: elementType[t.element_id], asOf,
-      progress: state.progress.filter((p) => p.task_id === t.id),
-      observations: state.stageObs.filter((o) => o.element_id === t.element_id),
-      inspections: state.inspections.filter((i) => i.element_id === t.element_id),
-      inspectable: !!cam?.detect_defects,
-    }) };
-  });
+  const lifecycle = lifecycleOf(state, elementType, asOf);
 
   const desired = desiredAlerts({ budget: ev.metrics.budget, schedule: ev.metrics.schedule, safety, sdi, evidence: evidence.summary });
   const open = (await db.query(
@@ -127,7 +121,28 @@ export async function recompute(db, project, asOf = today()) {
   }
   if (toResolve.length) await db.query('UPDATE alerts SET resolved_at = now() WHERE id = ANY($1::uuid[])', [toResolve]);
 
-  return { ready: true, asOf, state, evidence, cost, lifecycle, ...ev, sdi, safety, schedulePayload: payload, scheduleModel };
+  const alertChanges = { opened: toCreate.map((a) => a.dedupe_key), resolved: toResolve.length };
+  maybeRunDailyAnalyst({}, project, asOf, alertChanges); // AI brief when alerts change; not awaited, never blocks
+  return { ready: true, asOf, state, evidence, cost, lifecycle, ...ev, sdi, safety, schedulePayload: payload, scheduleModel, alertChanges };
+
+  // read-only mode (the AI assistant's tools run in a READ ONLY transaction): same numbers, nothing written
+  async function readOnlyResult() {
+    const elementTypes = Object.fromEntries((await db.query('SELECT id, element_type FROM design_elements WHERE project_id = $1', [project.id])).rows.map((e) => [e.id, e.element_type]));
+    return { ready: true, asOf, state, evidence, cost, lifecycle: lifecycleOf(state, elementTypes, asOf), ...ev, sdi, safety, schedulePayload: payload, scheduleModel, alertChanges: null };
+  }
+}
+
+function lifecycleOf(state, elementType, asOf) {
+  return state.tasks.map((t) => {
+    const cam = state.cameras.find((c) => c.kind === 'zone' && c.active && c.element_id === t.element_id);
+    return { task_id: t.id, name: t.name, seq: t.seq, ...taskLifecycle({
+      task: t, elementType: elementType[t.element_id], asOf,
+      progress: state.progress.filter((p) => p.task_id === t.id),
+      observations: state.stageObs.filter((o) => o.element_id === t.element_id),
+      inspections: state.inspections.filter((i) => i.element_id === t.element_id),
+      inspectable: !!cam?.detect_defects,
+    }) };
+  });
 }
 
 // ------------------------------------------------------------- model-based completion forecast
@@ -135,7 +150,7 @@ const hashOf = (x) => crypto.createHash('sha256').update(JSON.stringify(x)).dige
 let warnedModelDown = false;
 
 /**
- * Model forecast beside the EVM one (HANDOFF.md D16, D17): the inference service's baseline / ML / blend for
+ * Model forecast beside the EVM one (docs/handoff-schedule-assistant.md D16, D17): the inference service's baseline / ML / blend for
  * `payload`. Re-uses the stored answer of the same day when the inputs have not changed (dashboards call
  * recompute on every load). Never throws for a service problem: the result is then null and the EVM forecast is
  * unaffected.
@@ -176,7 +191,7 @@ export async function scheduleWhatIf(db, project, paceFactor, asOf = today()) {
 }
 
 // ------------------------------------------------------------------ dashboards
-export async function buildDashboard(db, project, role, asOf = today()) {
+export async function buildDashboard(db, project, role, asOf = today(), { persist = true } = {}) {
   const base = {
     project: {
       id: project.id, name: project.name, location: project.location, status: project.status,
@@ -184,7 +199,7 @@ export async function buildDashboard(db, project, role, asOf = today()) {
     },
     as_of: asOf,
   };
-  const r = await recompute(db, project, asOf);
+  const r = await recompute(db, project, asOf, { persist });
   const alertsRows = (await db.query(
     `SELECT id, kind, level, technical_msg, plain_msg, created_at, acknowledged_at FROM alerts
      WHERE project_id = $1 AND resolved_at IS NULL ORDER BY (level = 'critical') DESC, created_at DESC`, [project.id])).rows;

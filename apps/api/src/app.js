@@ -6,6 +6,7 @@ import { inferenceHealth } from './inference.js';
 import { router as authRouter } from './routes/auth.js';
 import { router as ingestRouter } from './routes/ingest.js';
 import { router as projectRouter } from './routes/projects.js';
+import { router as agentRouter } from './routes/agent.js';
 
 export function createApp() {
   const app = express();
@@ -21,6 +22,7 @@ export function createApp() {
 
   app.use('/api', authRouter);
   app.use('/api', ingestRouter); // camera-key auth: must come before the user-session router
+  app.use('/api', agentRouter);   // AI assistant (own auth; off unless AGENT_ENABLED=1)
   app.use('/api', projectRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: { code: 'not_found', message: 'no such endpoint' } }));
   app.use(errorHandler);

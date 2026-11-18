@@ -4,12 +4,14 @@ Construction progress, cost and safety monitoring for investors and site enginee
 
 An engineer enters only the initial design/budget (bill of quantities), the crews on site and the equipment available. Everything else is measured automatically: how far each part of the building has got, how much material was used (and so how much money was spent), and which defects and hazards exist. The system forecasts final cost and finish date with earned-value maths and shows investors a plain-language dashboard, while giving engineers the technical detail: standards, scores, hazard categories, suggested measures and warnings.
 
-**Status: Sprint 1 (FYP-1 mid evaluation).** The platform and the automated pipeline work end to end and are tested (261 automated tests). **Read the limits first:** the demo project uses *synthetic* camera frames; the image methods are validated only on those; accuracy on real site footage is not yet measured; a trained model from the team is expected to plug in (see [docs/model-integration.md](docs/model-integration.md)). Details in [docs/srs.md](docs/srs.md) section 5.
+**Status: Sprint 1 (FYP-1 mid evaluation).** The platform and the automated pipeline work end to end and are tested (472 automated tests). **Read the limits first:** the demo project uses *synthetic* camera frames; the image methods are validated only on those; accuracy on real site footage is not yet measured; a trained model from the team is expected to plug in (see [docs/model-integration.md](docs/model-integration.md)). Details in [docs/srs.md](docs/srs.md) section 5.
 
 | | |
 |---|---|
 | Investor view | Progress vs plan, money spent, expected final cost and overrun, expected finish date, safety light, productivity, alerts, camera photos, all in plain words |
 | Engineer view | BOQ and ACI 211.1/318 estimate, schedule, crews and equipment, evidence (camera health, frames, which model measured them), read-only risk: danger index, risk matrix, hazards with category / ALARP zone / bow-tie, standards, warnings |
+| Completion forecast | Beside the earned-value finish date, an experimental model forecast for engineers: earned schedule + S-curve baseline, gradient-boosting refinement (P10/P50/P90) and a blend, with a range, an explanation and a what-if pace slider. Trained on **synthetic** projects ([docs/schedule-forecast.md](docs/schedule-forecast.md)) |
+| AI assistant (optional) | Agentic assistant on Google Gemini that looks up the project's data with 12 read-only tools before it answers: daily site brief, questions in plain or technical words, recovery options for a late schedule, checks of doubtful camera frames, admin run log. It cannot change any data (read-only database transaction); figures it gives are checked against the data it read ([docs/assistant.md](docs/assistant.md)) |
 | Tamper resistance | Frames only from registered cameras (secret key, clock check, replay protection); no route to enter or edit progress, spend, defects or hazards; hazards close only after the cameras show the area clean on 3 consecutive days |
 | Stack | React + Vite, Node/Express, PostgreSQL, Python/FastAPI + OpenCV, pluggable model backends |
 
@@ -21,12 +23,16 @@ See [docs/implementation.md](docs/implementation.md) for details.
 npm install
 cd services/inference && python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt && cd ../..
 npm run dev             # starts everything -> http://localhost:5173  (Ctrl+C stops it)
-npm run test:all        # 261 tests (database must be running), writes docs/test-results.md
+npm run test:all        # 472 tests (database must be running), writes docs/test-results.md
 ```
 
 `npm run dev` starts PostgreSQL, the image-analysis service, the API and the web app in order, builds the demo project on first run (about a minute), and prefixes every log line with the service name. Each part can also be run alone (see implementation.md).
 
 Demo logins and what to check in each view: [docs/demo-accounts.md](docs/demo-accounts.md).
+
+**AI assistant** (off by default): put `AGENT_ENABLED=1` and `GEMINI_API_KEYS=key1,key2` in `.env` (git-ignored) and restart. Without keys it runs in a labelled offline demo mode. Project figures are then sent to Google; see [docs/assistant.md](docs/assistant.md) section 4.
+
+**Completion forecast model** (already trained; retrain with `cd services/inference && .venv/Scripts/python train_schedule.py`): see [docs/schedule-forecast.md](docs/schedule-forecast.md).
 
 **Crack detection on CCTV footage** (trained model, not active in the app until you choose it; see [docs/crack-model.md](docs/crack-model.md)):
 
@@ -45,6 +51,8 @@ cd services/inference
 | [docs/design.md](docs/design.md) | Architecture, interfaces, sequence and state diagrams, algorithms, the evidence and tamper model |
 | [docs/model-integration.md](docs/model-integration.md) | **For the model-training teammate**: contract, plug-in steps, evaluation, training-data export |
 | [docs/crack-model.md](docs/crack-model.md) | **Trained crack model** (SDNET2018): data, training, measured results, CCTV video monitor, limits, how to activate |
+| [docs/schedule-forecast.md](docs/schedule-forecast.md) | **Model-based completion forecast**: method, held-out results on synthetic projects, limits, retraining |
+| [docs/assistant.md](docs/assistant.md), [docs/agent-eval.md](docs/agent-eval.md) | **AI assistant**: jobs, tools, guardrails, setup, data sent to Google; real-model evaluation |
 | [docs/erd.md](docs/erd.md) | ER diagram generated from the live database |
 | [docs/implementation.md](docs/implementation.md) | Setup, file map, key-function walkthrough, decisions |
 | [docs/test-plan.md](docs/test-plan.md), [docs/test-results.md](docs/test-results.md) | Test strategy, 14 failures found, latest run |
@@ -57,9 +65,9 @@ cd services/inference
 ## Layout
 
 ```
-apps/api            Node/Express API, domain logic, tests
+apps/api            Node/Express API, domain logic, AI assistant (src/agent), tests
 apps/web            React web app (investor and engineer views)
-services/inference  Python image-analysis service: backend registry, classical and pretrained backends, plug-ins (incl. the trained crack model), evaluation, CCTV video monitor
+services/inference  Python image-analysis service: backend registry, classical and pretrained backends, plug-ins (incl. the trained crack model), evaluation, CCTV video monitor, schedule_forecast (completion forecast)
 db                  SQL migrations and reference data
 scripts             dev launcher, dev database, camera simulator, training-set export, ERD generator, test runner
 docs                all documentation

@@ -4,6 +4,30 @@ Generated from the live PostgreSQL schema by `npm run docs:erd`. Do not edit by 
 
 ```mermaid
 erDiagram
+  agent_runs {
+    uuid id PK
+    uuid project_id FK
+    text job
+    text audience
+    uuid started_by FK
+    uuid conversation_id
+    date as_of
+    uuid media_id FK
+    text status
+    text question
+    text answer
+    text verdict
+    jsonb steps
+    jsonb grounding
+    text provider
+    text model
+    integer key_index
+    integer input_tokens
+    integer output_tokens
+    text error
+    timestamp_with_time_zone created_at
+    timestamp_with_time_zone finished_at
+  }
   alerts {
     uuid id PK
     uuid project_id FK
@@ -387,6 +411,9 @@ erDiagram
     boolean is_active
     timestamp_with_time_zone created_at
   }
+  media |o--o{ agent_runs : "media_id"
+  projects ||--o{ agent_runs : "project_id"
+  users |o--o{ agent_runs : "started_by"
   projects ||--o{ alerts : "project_id"
   users |o--o{ alerts : "acknowledged_by"
   projects |o--o{ audit_log : "project_id"

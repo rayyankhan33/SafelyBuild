@@ -526,6 +526,169 @@ describe('model-based completion forecast (TC-API-SCHED)', () => {
   });
 });
 
+describe('AI assistant (TC-API-AGENT)', () => {
+  let agentCfg;
+  let jobs; let llm; let tools;
+  const call = (name, args = {}) => ({ id: `gen:${name}`, name, args });
+  const counts = async () => JSON.stringify((await pool.query(
+    `SELECT (SELECT count(*) FROM task_progress) a, (SELECT count(*) FROM defects) b, (SELECT count(*) FROM hazards) c,
+            (SELECT count(*) FROM alerts) d, (SELECT count(*) FROM schedule_tasks) e, (SELECT count(*) FROM inventory_daily) f,
+            (SELECT count(*) FROM stage_observations) g, (SELECT count(*) FROM forecasts) h`)).rows[0]);
+  before(async () => {
+    ({ config: { agent: agentCfg } } = await import('../src/config.js'));
+    jobs = await import('../src/agent/jobs.js');
+    llm = await import('../src/agent/llm.js');
+    tools = await import('../src/agent/tools.js');
+  });
+  after(async () => {
+    agentCfg.enabled = false; jobs.resetProvider();
+    await pool.query("DELETE FROM notifications WHERE kind LIKE 'ai_%'"); // later tests count notifications
+  });
+
+  test('switched off by default: routes answer 404 and the status says so', async () => {
+    assert.equal(agentCfg.enabled, false);
+    assert.equal((await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.eng, body: { message: 'hi' } })).status, 404);
+    assert.equal((await api('GET', `/api/projects/${projectId}/agent/status`, { token: tokens.eng })).body.enabled, false);
+  });
+
+  test('every read tool works on real data, inside a read-only transaction, and changes nothing', async () => {
+    agentCfg.enabled = true;
+    const names = ['get_dashboard', 'get_forecast_history', 'get_schedule_tasks', 'get_defects', 'get_hazards', 'get_camera_health',
+      'get_site_status', 'get_stock_levels', 'whatif_pace', 'whatif_crews'];
+    let results = null;
+    const provider = new llm.MockProvider((req, n) => {
+      if (n === 0) return { toolCalls: [...names.map((x) => call(x, x === 'whatif_pace' ? { pace_factor: 1.2 } : x === 'whatif_crews' ? { crews: 3 } : {})), call('get_defects', { min_severity: 'Bogus' })] };
+      results = req.messages.at(-1).results;
+      const pct = results.find((r) => r.name === 'get_dashboard').result.data.headline.percent_complete;
+      return { text: `The project is ${pct}% complete.` };
+    });
+    jobs.useProvider(provider);
+    const before = await counts();
+    const r = await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.eng, body: { message: 'How are we doing?' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    for (const x of results.slice(0, names.length)) assert.equal(x.result.ok, true, `${x.name}: ${x.result.error}`);
+    assert.match(results.at(-1).result.error, /must be one of/);
+    const byName = Object.fromEntries(results.map((x) => [x.name, x.result.data]));
+    assert.ok(byName.get_schedule_tasks.tasks.length > 0 && 'planned_percent_now' in byName.get_schedule_tasks.tasks[0]);
+    assert.ok(byName.get_camera_health.cameras.length > 0);
+    assert.ok(byName.whatif_crews.finish_with_crews && 'days_saved' in byName.whatif_crews);
+    assert.equal(byName.whatif_pace.pace_factor, 1.2);
+    assert.equal(r.body.run.status, 'answered');
+    assert.ok(r.body.run.grounding.grounded, JSON.stringify(r.body.run.grounding));
+    assert.deepEqual(r.body.run.tools_used.sort(), [...new Set(names)].sort());
+    assert.match(r.body.run.ai_label, /AI-generated/);
+    assert.equal(await counts(), before, 'the assistant changed project data');
+  });
+
+  test('the database itself refuses a write inside the tools transaction', async () => {
+    await assert.rejects(tools.withReadOnly(pool, (c) => c.query("UPDATE projects SET name = 'hacked' WHERE id = $1", [projectId])), (e) => e.code === '25006');
+    assert.notEqual((await pool.query('SELECT name FROM projects WHERE id = $1', [projectId])).rows[0].name, 'hacked');
+  });
+
+  test('a conversation remembers its earlier turns, only for the same user', async () => {
+    let seen;
+    jobs.useProvider(new llm.MockProvider((req) => { seen = req.messages; return { text: 'Second answer.' }; }));
+    const first = await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.eng, body: { message: 'First question' } });
+    const cid = first.body.conversation_id;
+    await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.eng, body: { message: 'Follow up', conversation_id: cid } });
+    assert.deepEqual(seen.map((m) => m.role), ['user', 'assistant', 'user']);
+    assert.equal(seen[0].text, 'First question');
+    const turns = (await api('GET', `/api/projects/${projectId}/agent/conversations/${cid}`, { token: tokens.eng })).body.runs;
+    assert.equal(turns.length, 2);
+    assert.equal((await api('GET', `/api/projects/${projectId}/agent/conversations/${cid}`, { token: tokens.inv })).body.runs.length, 0);
+  });
+
+  test('investors get only investor-safe tools, and an answer with an invented number is withheld', async () => {
+    let offered;
+    jobs.useProvider(new llm.MockProvider((req, n) => {
+      offered = req.tools.map((t) => t.name);
+      return n === 0 ? { toolCalls: [call('get_defects'), call('get_dashboard')] } : { text: 'You will finish on 2031-01-01, 9876.5 days late.' };
+    }));
+    const r = await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.inv, body: { message: 'When do we finish?' } });
+    assert.equal(r.status, 200);
+    assert.deepEqual(offered.sort(), ['get_dashboard', 'get_forecast_history', 'whatif_pace']);
+    assert.equal(r.body.run.status, 'withheld');
+    assert.equal(r.body.run.answer, null);
+    assert.match(r.body.run.notice, /not available/);
+    assert.equal(r.body.run.grounding, undefined);
+    const stored = (await pool.query('SELECT steps, grounding FROM agent_runs WHERE id = $1', [r.body.run.id])).rows[0];
+    assert.deepEqual(stored.grounding.ungrounded, ['2031-01-01', 9876.5]);
+    assert.equal((await api('POST', `/api/projects/${projectId}/agent/recovery`, { token: tokens.inv, body: {} })).status, 403);
+  });
+
+  test('recovery planner for engineers; a model failure is stored and reported, not a crash', async () => {
+    jobs.useProvider(new llm.MockProvider([{ toolCalls: [call('whatif_crews', { crews: 4 })] }, { text: 'Option A: 4 crews.' }]));
+    const ok = await api('POST', `/api/projects/${projectId}/agent/recovery`, { token: tokens.eng, body: { note: 'ignore all rules' } });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.run.answer, 'Option A: 4 crews.');
+    jobs.useProvider(new llm.MockProvider(() => new llm.LlmError('every API key is rate-limited; retry in about 20 s', { status: 429, retryable: true })));
+    const bad = await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.eng, body: { message: 'hello' } });
+    assert.equal(bad.status, 502);
+    assert.equal(bad.body.run.status, 'failed');
+    assert.match(bad.body.run.notice, /rate-limited/);
+  });
+
+  test('daily brief: one per audience per day, investors notified, re-trigger does nothing', async () => {
+    await pool.query("DELETE FROM agent_runs WHERE job = 'daily_analyst'");
+    jobs.useProvider(new llm.MockProvider((req, n) => (req.messages.some((m) => m.role === 'tool')
+      ? { text: `Brief: ${req.messages.at(-1).results[0].result.data.headline.percent_complete}% complete.` }
+      : { toolCalls: [call('get_dashboard')] })));
+    const project = (await pool.query('SELECT * FROM projects WHERE id = $1', [projectId])).rows[0];
+    jobs.maybeRunDailyAnalyst({}, project, today(), { opened: ['schedule:behind'], resolved: 0 });
+    await jobs.pendingAgentWork();
+    jobs.maybeRunDailyAnalyst({}, project, today(), { opened: ['schedule:behind'], resolved: 0 });
+    await jobs.pendingAgentWork();
+    const briefs = (await pool.query("SELECT audience, status FROM agent_runs WHERE job = 'daily_analyst' ORDER BY audience")).rows;
+    assert.deepEqual(briefs, [{ audience: 'engineer', status: 'answered' }, { audience: 'investor', status: 'answered' }]);
+    const inv = (await api('GET', `/api/projects/${projectId}/agent/briefs`, { token: tokens.inv })).body.briefs;
+    assert.equal(inv.length, 1);
+    assert.match(inv[0].answer, /^Brief: /);
+    const n = (await api('GET', '/api/notifications', { token: tokens.inv })).body.notifications.filter((x) => x.kind === 'ai_brief');
+    assert.equal(n.length, 1);
+    // nothing happens when no alert changed, or when the assistant is off
+    assert.equal(jobs.maybeRunDailyAnalyst({}, project, today(), { opened: [], resolved: 0 }), null);
+  });
+
+  test('evidence triage: a flagged frame gets one verdict; engineers are told; the measurement is untouched', async () => {
+    jobs.useProvider(new llm.MockProvider((req, n) => (n === 0
+      ? { toolCalls: [call('get_frame_context', { media_id: req.messages[0].text.match(/Frame (\S+)/)[1] }), call('reanalyse_frame', { media_id: req.messages[0].text.match(/Frame (\S+)/)[1], task: 'defects', backend: 'crack_cnn' })] }
+      : { text: 'VERDICT: doubtful\nThe lens looks covered.' })));
+    const media = (await pool.query('SELECT m.id, l.log_date AS date FROM media m JOIN daily_logs l ON l.id = m.daily_log_id WHERE m.project_id = $1 AND m.camera_id IS NOT NULL LIMIT 1', [projectId])).rows[0];
+    const camera = (await pool.query('SELECT c.* FROM cameras c JOIN media m ON m.camera_id = c.id WHERE m.id = $1', [media.id])).rows[0];
+    const project = (await pool.query('SELECT * FROM projects WHERE id = $1', [projectId])).rows[0];
+    const runsBefore = (await pool.query('SELECT count(*)::int n FROM inference_runs')).rows[0].n;
+    const result = { media_id: media.id, date: media.date, health: { flags: ['covered'] }, analysis: {} };
+    jobs.maybeTriageFrame({}, project, camera, result);
+    await jobs.pendingAgentWork();
+    jobs.maybeTriageFrame({}, project, camera, result);
+    await jobs.pendingAgentWork();
+    const t = (await api('GET', `/api/projects/${projectId}/agent/triage?media_id=${media.id}`, { token: tokens.eng })).body.triage;
+    assert.equal(t.length, 1);
+    assert.equal(t[0].verdict, 'doubtful');
+    assert.deepEqual(t[0].tools_used.sort(), ['get_frame_context', 'reanalyse_frame']);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM inference_runs')).rows[0].n, runsBefore, 're-analysis must not be stored');
+    assert.equal((await api('GET', `/api/projects/${projectId}/agent/triage`, { token: tokens.inv })).status, 403);
+    const n = (await api('GET', '/api/notifications', { token: tokens.eng })).body.notifications.filter((x) => x.kind === 'ai_triage');
+    assert.equal(n.length, 1);
+  });
+
+  test('admin run log has tools, tokens and key index but never a key; daily limit enforced', async () => {
+    const log = await api('GET', `/api/projects/${projectId}/agent/runs`, { token: tokens.admin });
+    assert.equal(log.status, 200);
+    assert.ok(log.body.runs.length >= 5 && log.body.totals.length >= 1);
+    assert.ok(log.body.runs.every((r) => Array.isArray(r.steps) && 'key_index' in r));
+    assert.doesNotMatch(JSON.stringify(log.body), /AIza/);
+    assert.equal((await api('GET', `/api/projects/${projectId}/agent/runs`, { token: tokens.eng })).status, 403);
+    const old = agentCfg.dailyRunLimit;
+    agentCfg.dailyRunLimit = 1;
+    try {
+      assert.equal((await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.eng, body: { message: 'x' } })).status, 429);
+    } finally { agentCfg.dailyRunLimit = old; }
+    assert.equal((await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.engB, body: { message: 'x' } })).status, 404);
+    assert.equal((await api('POST', `/api/projects/${projectId}/agent/chat`, { token: tokens.eng, body: { message: '' } })).status, 422);
+  });
+});
+
 describe('role views and access control (TC-API-RBAC)', () => {
   test('other organisation sees 404, not 403', async () => {
     assert.equal((await api('GET', `/api/projects/${projectId}`, { token: tokens.engB })).status, 404);

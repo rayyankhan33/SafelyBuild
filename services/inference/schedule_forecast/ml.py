@@ -1,5 +1,5 @@
 """
-ml.py - machine-learning refinement of the baseline forecast (decisions D10-D15 in HANDOFF.md).
+ml.py - machine-learning refinement of the baseline forecast (decisions D10-D15 in docs/handoff-schedule-assistant.md).
 
 Three HistGradientBoostingRegressor(loss="quantile") models predict log1p(remaining calendar days) at the
 10th, 50th and 90th percentile. HistGradientBoosting is used because it accepts missing values (a project
@@ -377,7 +377,7 @@ def _metrics(pred: np.ndarray, truth: np.ndarray, lower=None, upper=None) -> dic
 
 def evaluate(projects: Sequence, bundle: dict | None, checkpoints: Sequence[float] = (20, 40, 60, 80)) -> dict:
     """
-    Honest evaluation on HELD-OUT projects (HANDOFF.md section 7). `projects` must be the test split only.
+    Honest evaluation on HELD-OUT projects (docs/handoff-schedule-assistant.md section 7). `projects` must be the test split only.
 
     For each project and checkpoint c the forecast is made at the first observation where cleaned progress
     reaches c, and compared with the true remaining days, for baseline, ML, blend, the plain EVM rule

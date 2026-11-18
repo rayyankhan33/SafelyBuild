@@ -98,5 +98,6 @@ Recovery plan for items 15-19: weekly demonstrable milestones in Sprint 2. Week 
 | 2026-09-07 | POC committed (Streamlit, YOLO-World zero-shot, heuristics, SQLite) - see `git log` | Team to confirm demo status |
 | 2026-10-11 | First platform cut: API, database, inference service, web app, 116 tests (engineer-typed data entry) | Yes: `npm run test:all` |
 | 2026-10-12 | Automated-evidence redesign: cameras only, no human path to evidence, derived hazards, plug-in model registry, 261 tests; measured fidelity on synthetic frames: work done -1.0 %, spend -1.6 % | Yes: `npm run test:all`, `npm run dev` demo, tamper demo in test-plan.md |
+| 2026-11-18 | Model-based completion forecast (earned schedule + S-curve baseline, gradient-boosting P10/P50/P90 refinement trained on synthetic projects, engineer panel with what-if) and the optional agentic AI assistant on Gemini (daily brief, chat, recovery options, evidence checks, admin log; read-only by construction); 472 tests; held-out forecast MAE 53/40/28/20 days at 20/40/60/80 % (EVM rule 103/51/46/63); assistant 19/20 golden questions, 6/6 guardrails on the real model | Yes: `npm run test:all`, Schedule tab panel, AI assistant tab with `AGENT_ENABLED=1`, `node scripts/agent-eval.mjs` |
 
 Add a row for every claimed milestone with a live-demo confirmation. Do not mark anything done that cannot be shown running.

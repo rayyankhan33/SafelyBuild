@@ -10,7 +10,7 @@ Baseline (explainable, implemented here):
     5. approximate 80 % interval from the fit uncertainty                 _linear_leg / _scurve_leg
     6. too little data: plan / SPI if a plan exists, else no number       _fallback
 
-ML refinement and blending are in ml.py and are stubs until trained (see HANDOFF.md).
+ML refinement is in ml.py; the blend and the orchestrator (forecast_all) are at the end of this file.
 
 Limits, stated plainly: the forecast assumes the future looks like the measured past; the interval
 reflects fit uncertainty only (not model-form error); progress that cameras cannot see is invisible here.
@@ -300,7 +300,7 @@ def _fallback(inp: ForecastInput, details: dict, reason: str) -> ForecastResult:
 # ------------------------------------------------------------------------------ baseline
 def baseline_forecast(inp: ForecastInput) -> ForecastResult:
     """
-    Explainable baseline forecast (decisions D3-D9 in HANDOFF.md).
+    Explainable baseline forecast (decisions D3-D9 in docs/handoff-schedule-assistant.md).
 
     Never raises on thin or odd data: it returns status insufficient_data or stalled with the reason in
     details["fallback_reason"]. `details` carries every intermediate number the UI needs to explain the result:

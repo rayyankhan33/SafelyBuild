@@ -8,6 +8,7 @@ import { HttpError, audit, bad, wrap } from '../http.js';
 import { authenticateCamera, ingestFrame } from '../services/ingest.js';
 import { recompute } from '../services/forecast.js';
 import { rebuild } from '../services/rollup.js';
+import { maybeTriageFrame } from '../agent/jobs.js';
 
 export const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.maxUploadBytes, files: 1 } });
@@ -21,6 +22,7 @@ router.post('/ingest/frame', upload.single('image'), wrap(async (req, res) => {
   const project = (await pool.query('SELECT * FROM projects WHERE id = $1', [camera.project_id])).rows[0];
   await rebuild(pool, project);
   await recompute(pool, project);
+  maybeTriageFrame({}, project, camera, result); // AI check of doubtful frames; not awaited, advice only
   await audit(pool, { project, user: null, actor: `camera: ${camera.name}` }, 'ingest', 'frame', result.media_id, { camera: camera.name });
   res.status(201).json(result);
 }));

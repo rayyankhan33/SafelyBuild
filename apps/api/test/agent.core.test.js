@@ -30,13 +30,13 @@ test('loop: runs the requested tool, feeds the result back, returns the answer',
 });
 
 test('loop: stops at the step limit and forces a final answer with tools off', async () => {
-  const provider = new MockProvider((req) => (req.tools.length ? { toolCalls: [call('get_dashboard')] } : { text: 'Best effort answer.' }));
+  const provider = new MockProvider((req) => (req.toolChoice !== 'none' ? { toolCalls: [call('get_dashboard')] } : { text: 'Best effort answer.' }));
   const out = await runAgent({ provider, system: 's', messages: [{ role: 'user', text: 'q' }], tools: toolsForRole('engineer'),
     executeTool: async () => ({ ok: true, data: {} }), maxSteps: 3 });
   assert.equal(out.status, 'step_limit');
   assert.equal(out.answer, 'Best effort answer.');
   assert.equal(provider.requests.length, 4);
-  assert.deepEqual(provider.requests.at(-1).tools, []);
+  assert.equal(provider.requests.at(-1).toolChoice, 'none');
 });
 
 test('loop: the tool-call budget is enforced', async () => {
@@ -88,6 +88,12 @@ test('grounding: figures must come from tool results', () => {
   const results = [{ name: 'get_dashboard', result: { ok: true, data: { spi: 0.87, eac: 12_500_000, forecast_end: '2026-09-21', days_late: 143.2, text: 'overrun of PKR 3.40 lakh' } } }];
   const good = 'SPI is 0.87 (87 %). Forecast finish 2026-09-21, about 143 days late, final cost PKR 1.25 crore, overrun 3.4 lakh. Three actions follow.';
   assert.deepEqual(checkGrounding(good, results), { grounded: true, checked: 6, ungrounded: [] });
+  // written-out dates are dates, not figures: "30 January 2027" must not flag 30
+  const written = [{ name: 'd', result: { ok: true, data: { planned_end: '2027-01-30', text: 'finish 6 Mar 2027' } } }];
+  assert.deepEqual(checkGrounding('Planned end 30 January 2027; forecast March 6, 2027 (6th March 2027).', written), { grounded: true, checked: 3, ungrounded: [] });
+  assert.deepEqual(checkGrounding('It ends 31 January 2027.', written).ungrounded, ['2027-01-31']);
+  // a large invented number must not match a percentage-sized fact through scaling
+  assert.equal(checkGrounding('It is 9876.5 days late.', [{ name: 'x', result: { ok: true, data: { pct: 98.8 } } }]).grounded, false);
   const bad = checkGrounding('Finish 2026-10-01, 60 days late, in 2026.', results);
   assert.equal(bad.grounded, false);
   assert.deepEqual(bad.ungrounded, ['2026-10-01', 60]);

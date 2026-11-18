@@ -1,9 +1,9 @@
 // The agent loop: ask the model, run the tools it asks for, give it the results, repeat until it answers.
 //
-// This is deliberately small and provider-neutral (see llm.js). Limits are hard: a run can never take more
-// than `maxSteps` model calls or `maxToolCalls` tool executions, and stops at `deadlineMs`. When a limit is
-// reached the model gets one last call with tools switched off, so the user still receives an answer built
-// from what was gathered, marked with status 'step_limit'.
+// Deliberately small and provider-neutral (see llm.js). Limits are hard: a run can never take more than
+// `maxSteps` model calls or `maxToolCalls` tool executions, and stops at `deadlineMs`. When a limit is reached
+// the model gets one last call with tool use switched off, so the user still receives an answer built from what
+// was gathered, marked with status 'step_limit' or 'deadline'.
 
 export const LOOP_DEFAULTS = { maxSteps: 8, maxToolCalls: 16, deadlineMs: 120_000 };
 
@@ -15,7 +15,7 @@ export const LOOP_DEFAULTS = { maxSteps: 8, maxToolCalls: 16, deadlineMs: 120_00
  * @param {object[]} o.tools        tool definitions the model may call [{ name, description, parameters }]
  * @param {(call: {id, name, args}) => Promise<object>} o.executeTool  returns a JSON-serialisable result;
  *                                  must not throw for bad model input (return { ok: false, error } instead)
- * @param {(step: object) => void} [o.onStep]  called after every model call (for logging / streaming)
+ * @param {(step: object) => void} [o.onStep]  called after every model call (for logging / progress)
  * @returns {Promise<{status: 'answered'|'step_limit'|'deadline', answer: string, steps: object[],
  *                    toolResults: object[], usage: {input_tokens: number, output_tokens: number}}>}
  */
@@ -28,8 +28,8 @@ export async function runAgent({ provider, system, messages, tools, executeTool,
   const started = now();
   let toolCallsMade = 0;
 
-  const ask = async (toolList) => {
-    const out = await provider.generate({ system, messages: convo, tools: toolList });
+  const ask = async (toolChoice) => {
+    const out = await provider.generate({ system, messages: convo, tools, toolChoice });
     usage.input_tokens += out.usage?.input_tokens ?? 0;
     usage.output_tokens += out.usage?.output_tokens ?? 0;
     return out;
@@ -38,13 +38,13 @@ export async function runAgent({ provider, system, messages, tools, executeTool,
 
   for (let i = 0; i < maxSteps; i += 1) {
     if (now() - started > deadlineMs) return forceAnswer('deadline');
-    const out = await ask(tools);
+    const out = await ask('auto');
     const step = { index: i, text: out.text, tool_calls: out.toolCalls.map((c) => ({ name: c.name, args: c.args })) };
     steps.push(step);
     onStep?.(step);
     if (!out.toolCalls.length) return finish('answered', out.text);
 
-    convo.push({ role: 'assistant', text: out.text, toolCalls: out.toolCalls });
+    convo.push({ role: 'assistant', text: out.text, toolCalls: out.toolCalls, raw: out.raw ?? null });
     const results = [];
     for (const call of out.toolCalls) {
       let result;
@@ -63,8 +63,9 @@ export async function runAgent({ provider, system, messages, tools, executeTool,
 
   async function forceAnswer(status) {
     convo.push({ role: 'user', text: 'Stop calling tools. Give your final answer now, using only the tool results above. Say plainly what you could not check.' });
-    const out = await ask([]);
+    const out = await ask('none');
     steps.push({ index: steps.length, text: out.text, tool_calls: [], forced: true });
+    onStep?.(steps.at(-1));
     return finish(status, out.text);
   }
 }

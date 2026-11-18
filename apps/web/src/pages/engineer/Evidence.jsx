@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react';
 import { api, dateText } from '../../api.js';
 import { AuthImage } from '../../components.jsx';
+import { TriageList } from '../../components/Assistant.jsx';
 
 const STATUS = { suspect: ['critical', '✕', 'Suspected fault'], ok: ['good', '✓', 'Reporting'], stale: ['critical', '✕', 'Overdue'], never: ['critical', '✕', 'Never reported'], idle: ['neutral', '–', 'Not needed now'], disabled: ['neutral', '–', 'Disabled'] };
 const TAMPER = { covered: 'covered or blacked out', blurred: 'out of focus', redirected: 'pointing at a different view' };
 const KIND = { zone: 'Zone (one element)', yard: 'Material yard', overview: 'Inspection / overview' };
 
-export default function Evidence({ data, pid }) {
+export default function Evidence({ data, pid, agent }) {
   const ev = data.evidence;
   const [cams, setCams] = useState([]);
   const [error, setError] = useState('');
@@ -68,6 +69,7 @@ export default function Evidence({ data, pid }) {
         {open && <div style={{ marginTop: 12, maxWidth: 560 }}><div className="photo" style={{ aspectRatio: '4/3' }}><AuthImage mediaId={open} alt="Camera frame" /></div></div>}
         <p className="tiny">Each analysis is stored with the model that produced it (name and version), so any figure can be traced and re-run when a better model is installed. Dates: {dateText(data.as_of)}.</p>
       </div>
+      {agent?.features?.triage && <TriageList pid={pid} />}
     </>
   );
 }

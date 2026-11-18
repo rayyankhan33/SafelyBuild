@@ -91,6 +91,10 @@ flowchart LR
 | `GET /media/:id/file` | member | frame bytes |
 | `GET /projects/:pid/dashboard` | member | investor payload for investors, engineer payload for staff |
 | `POST /projects/:pid/alerts/:aid/ack`, `GET .../audit` | staff | acknowledge alert; audit trail |
+| `POST /projects/:pid/schedule-model/whatif` | staff | model completion forecast with the future pace scaled (0.5-2); computes only ([schedule-forecast.md](schedule-forecast.md)) |
+| `GET /projects/:pid/agent/status`, `POST .../agent/chat`, `GET .../agent/conversations/:cid`, `GET .../agent/briefs` | member | AI assistant: on/off, questions, own conversation, daily briefs for the caller's audience ([assistant.md](assistant.md)); 404 unless `AGENT_ENABLED=1` |
+| `POST .../agent/briefs`, `POST .../agent/recovery`, `GET .../agent/triage` | staff | brief now, recovery options, verdicts on doubtful frames |
+| `GET .../agent/runs` | admin | assistant run log |
 | `GET /health` | public | database and inference status |
 
 **Deliberately absent:** any route to create or change progress, material use, spend, defects, hazards or frames. Tests assert that the old Sprint 1 routes return 404 for every role.
@@ -105,6 +109,7 @@ Errors: `{ "error": { "code", "message", "details?" } }` with 401, 403, 404 (als
 | `POST /v1/stage?element_type=&backend=` | `image` | `{stage, fraction, evidence, backend, reliability}` |
 | `POST /v1/inventory?scale_m_per_px=&backend=` | `image` | `{items:[{material_code, quantity, unit, method, confidence}]}` |
 | `POST /v1/activity` | `previous`, `current` | `{change_ratio, scene_similarity, alignment_ok}` |
+| `POST /v1/schedule/forecast` | JSON `{start_date, as_of, observations[{day,pct}], planned_duration_days, planned_pct_now, planned_curve, floors?, pace_factor}` | `{baseline, ml, blend, model_version}`, each with dates, range and `details` |
 | `GET /v1/backends`, `GET /health` | - | active backend per task, all backends and their availability |
 | `POST /v1/demo/frame` | form | synthetic frame; **only when `ENABLE_DEMO_FRAMES=1`** |
 
@@ -236,6 +241,20 @@ An alert has the same open / resolved cycle, driven by `diffAlerts` (one open al
 - PV(d) = sum of task budget x planned fraction (working days elapsed / working days in task). EV(d) = sum of task budget x measured %. AC(d) = measured spend to date.
 - CPI = EV / AC, SPI = EV / PV. EAC = BAC / CPI; range from the recent cost per unit of value (last 7 days). Forecast duration = planned working days / SPI.
 - Thresholds in `THRESHOLDS`: at least 3 logged days; budget on track up to 2 % over, at risk up to 10 %; schedule tolerance 3 % of duration (minimum 1 day), at risk up to 10 %.
+
+### 6.4a Model-based completion forecast (`services/inference/schedule_forecast`)
+
+Shown beside the EVM date for engineers only. Baseline = earned schedule (SPI(t) = ES ÷ elapsed, finish = PD ÷ SPI(t)),
+logistic S-curve and recent pace, weighted by hold-out error with earned schedule at least 85 %; ML = three quantile
+gradient-boosting models; blend = ML share × ML + rest × baseline, ML skipped with < 3 observations or out-of-range
+inputs. Cached per project and day by input hash in `forecasts.schedule_model`. Details and results:
+[schedule-forecast.md](schedule-forecast.md).
+
+### 6.4b AI assistant (`apps/api/src/agent`)
+
+Tool-calling loop over 12 read-only tools inside a `READ ONLY` transaction, hard step/tool/time limits, role-filtered
+tools, number and date grounding check (investor answers withheld if a figure is not in the data read), runs logged
+in `agent_runs`. Details: [assistant.md](assistant.md).
 
 ### 6.5 Structural Danger Index and hazards (`domain/risk.js`)
 
