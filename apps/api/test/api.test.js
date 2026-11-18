@@ -473,6 +473,59 @@ describe('hazards and evidence over several days (TC-API-LIFE)', () => {
   });
 });
 
+describe('model-based completion forecast (TC-API-SCHED)', () => {
+  const sched = fake.state.schedule;
+  const stored = async () => (await pool.query('SELECT schedule_model FROM forecasts WHERE project_id = $1 AND as_of = $2', [projectId, today()])).rows[0]?.schedule_model;
+  test('the engineer view shows baseline, ML and blend beside the EVM forecast; the investor view does not', async () => {
+    await pool.query('UPDATE forecasts SET schedule_model = NULL WHERE project_id = $1', [projectId]);
+    const before = sched.payloads.length;
+    const d = await dash(tokens.eng);
+    assert.ok(sched.payloads.length > before, 'inference service was not asked');
+    const p = sched.payloads.at(-1);
+    assert.equal(p.as_of, today());
+    assert.ok(p.observations.length >= 1 && p.observations.every((o) => o.day >= 0 && o.pct >= 0 && o.pct <= 100));
+    assert.ok(p.planned_duration_days > 0 && Array.isArray(p.planned_curve) && p.planned_curve.length >= 2);
+    assert.equal(d.schedule_model.blend.remaining_days, 95);
+    assert.equal(d.schedule_model.model_version, 'fake-model');
+    assert.ok(d.schedule_model.evm && 'forecast_end' in d.schedule_model.evm);
+    assert.match(d.schedule_model.disclaimer, /synthetic/);
+    assert.ok(d.schedule_model.chart.actual.length >= 1 && d.schedule_model.chart.extension.blend);
+    assert.ok((await stored()).input_hash);
+    assert.equal((await dash(tokens.inv)).schedule_model, undefined);
+  });
+  test('an unchanged project is not re-forecast on every page load', async () => {
+    await dash(tokens.eng);
+    const n = sched.payloads.length;
+    await dash(tokens.eng);
+    await dash(tokens.admin);
+    assert.equal(sched.payloads.length, n);
+  });
+  test('forecasting service failure leaves the EVM forecast and the dashboard intact', async () => {
+    await pool.query('UPDATE forecasts SET schedule_model = NULL WHERE project_id = $1', [projectId]);
+    sched.fail = true;
+    try {
+      const r = await api('GET', `/api/projects/${projectId}/dashboard`, { token: tokens.eng });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.schedule_model, null);
+      assert.ok(r.body.headline.schedule.status);
+      assert.equal(await stored(), null);
+      assert.equal((await api('POST', `/api/projects/${projectId}/schedule-model/whatif`, { token: tokens.eng, body: { pace_factor: 1.2 } })).status, 503);
+    } finally { sched.fail = false; }
+  });
+  test('what-if: staff can ask, the pace factor is passed on, nothing is stored; investors cannot', async () => {
+    const before = JSON.stringify(await stored());
+    const r = await api('POST', `/api/projects/${projectId}/schedule-model/whatif`, { token: tokens.eng, body: { pace_factor: 1.2 } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(sched.payloads.at(-1).pace_factor, 1.2);
+    assert.equal(r.body.pace_factor, 1.2);
+    assert.ok(r.body.blend && r.body.chart);
+    assert.equal(JSON.stringify(await stored()), before);
+    assert.equal((await api('POST', `/api/projects/${projectId}/schedule-model/whatif`, { token: tokens.inv, body: { pace_factor: 1.2 } })).status, 403);
+    assert.equal((await api('POST', `/api/projects/${projectId}/schedule-model/whatif`, { token: tokens.eng, body: { pace_factor: 5 } })).status, 422);
+    assert.equal((await api('POST', `/api/projects/${projectId}/schedule-model/whatif`, { token: tokens.admin, body: { pace_factor: 0.8 } })).status, 200);
+  });
+});
+
 describe('role views and access control (TC-API-RBAC)', () => {
   test('other organisation sees 404, not 403', async () => {
     assert.equal((await api('GET', `/api/projects/${projectId}`, { token: tokens.engB })).status, 404);

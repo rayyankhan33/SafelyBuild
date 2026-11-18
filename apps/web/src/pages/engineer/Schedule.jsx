@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, dateText, pkr } from '../../api.js';
 import { Badge } from '../../components.jsx';
+import ScheduleModel from '../../components/ScheduleModel.jsx';
 
 export default function Schedule({ pid, data, reload }) {
   const [tasks, setTasks] = useState([]);
@@ -34,6 +35,7 @@ export default function Schedule({ pid, data, reload }) {
         </div>
         {msg.text && <div className={msg.type === 'err' ? 'err' : 'ok'} role="status" style={{ marginTop: 8 }}>{msg.text}</div>}
       </div>
+      {data.setup_complete && <ScheduleModel pid={pid} model={data.schedule_model} plannedEnd={sched?.planned_end} />}
       <div className="card table-wrap" style={{ marginTop: 16 }}>
         <table>
           <thead><tr><th>#</th><th>Task</th><th>Planned start</th><th>Planned end</th><th className="num">Budget</th><th style={{ minWidth: 160 }}>Progress</th><th style={{ minWidth: 240 }}>Completion lifecycle</th></tr></thead>

@@ -9,10 +9,12 @@ Env:  ENABLE_DEMO_FRAMES=1            expose /v1/demo/frame (synthetic frames fo
 
 import json
 import os
+from datetime import date
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, Field
 
 import footage
 import health as framehealth
@@ -125,6 +127,39 @@ async def camera_health(image: UploadFile = File(...), refs: list[UploadFile] = 
     img = _image(await _read(image))
     ref_imgs = [_image(await _read(r)) for r in refs[:5]]
     return framehealth.frame_health(img, ref_imgs)
+
+
+class _ScheduleObservation(BaseModel):
+    day: float = Field(ge=0)
+    pct: float = Field(ge=0, le=100)
+
+
+class _ScheduleRequest(BaseModel):
+    start_date: date
+    as_of: date
+    observations: list[_ScheduleObservation] = Field(max_length=5000)
+    planned_duration_days: float | None = Field(default=None, gt=0)
+    planned_pct_now: float | None = Field(default=None, ge=0, le=100)
+    floors: int | None = Field(default=None, ge=1, le=200)
+    pace_factor: float = Field(default=1.0, ge=0.1, le=10)
+    planned_curve: list[tuple[float, float]] | None = Field(default=None, max_length=2000)  # [(day, planned %)]
+
+
+@app.post("/v1/schedule/forecast")
+def schedule_forecast_endpoint(req: _ScheduleRequest):
+    """Completion forecast from a percent-complete history: baseline, ML (when a model is trained) and blend."""
+    if req.as_of < req.start_date:
+        raise HTTPException(422, "as_of is before start_date")
+    try:  # lazy import: the rest of the service must work without scipy / scikit-learn
+        from schedule_forecast import forecast as sched
+        from schedule_forecast.models import ForecastInput, Observation
+        inp = ForecastInput(req.start_date, req.as_of, tuple(Observation(o.day, o.pct) for o in req.observations),
+                            req.planned_duration_days, req.planned_pct_now, req.floors, req.pace_factor,
+                            tuple((float(d), float(p)) for d, p in req.planned_curve) if req.planned_curve else None)
+        out = sched.forecast_all(inp)
+    except ImportError as e:
+        raise HTTPException(501, f"schedule forecast unavailable: {e}")
+    return {k: (v.to_dict() if hasattr(v, "to_dict") else v) for k, v in out.items()}
 
 
 @app.post("/v1/demo/frame")

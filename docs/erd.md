@@ -139,6 +139,7 @@ erDiagram
     date as_of
     jsonb budget
     jsonb schedule
+    jsonb schedule_model
   }
   hazard_library {
     integer id PK

@@ -10,11 +10,11 @@ export class InferenceError extends Error {
   }
 }
 
-async function call(path, form, query = '') {
+async function call(path, form, query = '', headers = undefined) {
   let res;
   try {
     res = await fetch(`${config.inferenceUrl}${path}${query}`, {
-      method: 'POST', body: form, signal: AbortSignal.timeout(config.inferenceTimeoutMs),
+      method: 'POST', body: form, headers, signal: AbortSignal.timeout(config.inferenceTimeoutMs),
     });
   } catch (e) {
     throw new InferenceError(e.name === 'TimeoutError' ? 'inference service timed out' : `inference service unreachable (${e.cause?.code ?? e.message})`);
@@ -60,6 +60,15 @@ export function analyseHealth(buf, contentType, refs = []) {
   f.append('image', blob(buf, contentType), 'frame');
   for (const r of refs) f.append('refs', blob(r.buffer, r.contentType), 'ref');
   return call('/v1/health', f);
+}
+
+/**
+ * Completion forecast from a percent-complete history (services/inference/schedule_forecast, HANDOFF.md section 4).
+ * payload: {start_date, as_of, observations: [{day, pct}], planned_duration_days?, planned_pct_now?, floors?, pace_factor?}
+ * Resolves to {baseline, ml, blend, model_version}. Throws InferenceError like every other call.
+ */
+export function scheduleForecast(payload) {
+  return call('/v1/schedule/forecast', JSON.stringify(payload), '', { 'content-type': 'application/json' });
 }
 
 export async function inferenceHealth() {

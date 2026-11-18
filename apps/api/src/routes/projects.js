@@ -12,7 +12,8 @@ import { config } from '../config.js';
 import { today } from '../domain/dates.js';
 import { validateElement } from '../domain/estimation.js';
 import * as storage from '../storage.js';
-import { buildDashboard, recompute } from '../services/forecast.js';
+import { buildDashboard, recompute, scheduleWhatIf } from '../services/forecast.js';
+import { InferenceError } from '../inference.js';
 import { createCamera, listCameras, setCameraActive } from '../services/ingest.js';
 import { listNotifications, markAllRead, markRead } from '../services/notifications.js';
 import * as testfootage from '../services/testfootage.js';
@@ -280,6 +281,17 @@ router.get('/test-frames/:id/image', engineerOnly, wrap(async (req, res) => {
 router.get('/projects/:pid/dashboard', read, wrap(async (req, res) => {
   const asOf = req.query.as_of ? parse(isoDate, req.query.as_of) : today();
   res.json(await buildDashboard(pool, req.project, req.user.role, asOf));
+}));
+// Model-based completion forecast what-if (engineer view): computes only, stores nothing.
+const whatIfBody = z.object({ pace_factor: z.number().min(0.5).max(2) }).strict();
+router.post('/projects/:pid/schedule-model/whatif', staff, wrap(async (req, res) => {
+  const b = parse(whatIfBody, req.body);
+  try {
+    res.json(await scheduleWhatIf(pool, req.project, b.pace_factor));
+  } catch (e) {
+    if (e instanceof InferenceError) return res.status(503).json({ error: { code: 'forecast_unavailable', message: 'The forecasting service is not reachable right now.' } });
+    throw e;
+  }
 }));
 router.post('/projects/:pid/alerts/:aid/ack', eng, wrap(async (req, res) => {
   if (!uuid.safeParse(req.params.aid).success) throw notFound('alert');

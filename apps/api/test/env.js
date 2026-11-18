@@ -28,6 +28,7 @@ export function startFakeInference() {
     // test-footage job: `script` is the list of job views served in order (the last one repeats)
     footage: { script: [], idx: 0, starts: [], deleted: [], rejectStart: null, gone: false },
     healthFlags: [], healthCalls: 0,   // camera tamper screening: flags returned for every frame
+    schedule: { payloads: [], fail: false },   // model-based completion forecast: requests received; fail = answer 500
   };
   const server = http.createServer((req, res) => {
     const chunks = [];
@@ -37,6 +38,15 @@ export function startFakeInference() {
       const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
       if (state.mode === 'down') return req.socket.destroy();
       if (state.mode === 'error') return send(500, { detail: 'model crashed' });
+      if (req.url.startsWith('/v1/schedule/forecast')) {
+        state.schedule.payloads.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        if (state.schedule.fail) return send(500, { detail: 'forecast crashed' });
+        return send(200, {
+          baseline: { method: 'baseline', status: 'ok', remaining_days: 100, lower_days: 80, upper_days: 130, completion_date: '2027-01-01', details: { fit_used: 'earned_schedule', spi: 0.9, curve: null } },
+          ml: { method: 'ml', status: 'ok', remaining_days: 90, lower_days: 70, upper_days: 120, completion_date: '2026-12-22', details: { top_features: [['evm_remaining', 0.3]] } },
+          blend: { method: 'blend', status: 'ok', remaining_days: 95, lower_days: 75, upper_days: 125, completion_date: '2026-12-27', details: { ml_weight: 0.5 } },
+          model_version: 'fake-model' });
+      }
       if (req.url.startsWith('/v1/health')) { state.healthCalls += 1; return send(200, { metrics: { refs: 0 }, flags: state.healthFlags }); }
       if (req.url.startsWith('/v1/test/')) {
         const f = state.footage;

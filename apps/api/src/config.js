@@ -26,4 +26,14 @@ export const config = {
   // Frames whose camera clock differs from the server by more than this are rejected (replay / clock tampering).
   maxClockSkewMs: Number(env.MAX_CLOCK_SKEW_MS || 10 * 60_000),
   maxFramesPerCameraPerDay: Number(env.MAX_FRAMES_PER_CAMERA_PER_DAY || 200),
+  // AI assistant (apps/api/src/agent, HANDOFF.md part B). Off unless AGENT_ENABLED=1; read-only by design.
+  agent: {
+    enabled: env.AGENT_ENABLED === '1',
+    provider: env.AGENT_PROVIDER || 'mock',                       // 'gemini' | 'mock'
+    geminiKeys: (env.GEMINI_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean), // rotated on rate limit
+    geminiModel: env.GEMINI_MODEL || '',
+    requestTimeoutMs: Number(env.AGENT_REQUEST_TIMEOUT_MS || 60_000),
+    dailyRunLimit: Number(env.AGENT_DAILY_RUN_LIMIT || 100),      // per project, all jobs
+    triagePerDay: Number(env.AGENT_TRIAGE_PER_DAY || 10),         // evidence-triage runs per project per day
+  },
 };

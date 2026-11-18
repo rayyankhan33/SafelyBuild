@@ -1,0 +1,416 @@
+{
+  "note": "Trained and evaluated on synthetic projects. This validates the pipeline, not real-world accuracy.",
+  "model_version": "sched-gbm-0.1.0-seed0",
+  "generated": "2026-11-17",
+  "settings": {
+    "projects": 800,
+    "seed": 0,
+    "split": [
+      560,
+      120,
+      120
+    ],
+    "velocity_window_days": 42.0,
+    "logistic_done_pct": 98.0,
+    "baseline_interval_scale": 2.7
+  },
+  "blend_weights": {
+    "0": 1.0,
+    "1": 0.75,
+    "2": 0.75,
+    "3": 1.0
+  },
+  "ml_interval_scale": 1.35,
+  "feature_importance": {
+    "pct": 0.0661,
+    "elapsed_days": 0.00299,
+    "velocity_recent": 0.0081,
+    "velocity_overall": 0.00176,
+    "acceleration": 0.00186,
+    "velocity_std": 0.00186,
+    "planned_duration_days": 0.07336,
+    "spi": 0.0121,
+    "floors": -0.0005,
+    "monsoon_next90": 0.03018,
+    "baseline_remaining": 0.15238,
+    "evm_remaining": 0.1746,
+    "es_remaining": 0.3737
+  },
+  "test": {
+    "n_projects": 120,
+    "model_version": "sched-gbm-0.1.0-seed0",
+    "20": {
+      "n_projects": 120,
+      "baseline": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 63.3,
+        "median_ae_days": 52.3,
+        "mape_pct": 18.3,
+        "bias_days": -11.0,
+        "interval_coverage": 0.683
+      },
+      "ml": {
+        "n": 118,
+        "n_no_forecast": 2,
+        "mae_days": 53.5,
+        "median_ae_days": 41.3,
+        "mape_pct": 15.5,
+        "bias_days": -12.7,
+        "interval_coverage": 0.78
+      },
+      "blend": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 52.6,
+        "median_ae_days": 39.8,
+        "mape_pct": 15.3,
+        "bias_days": -12.3,
+        "interval_coverage": 0.8
+      },
+      "evm": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 103.0,
+        "median_ae_days": 80.2,
+        "mape_pct": 28.7,
+        "bias_days": 40.8
+      },
+      "earned_schedule": {
+        "n": 118,
+        "n_no_forecast": 2,
+        "mae_days": 63.0,
+        "median_ae_days": 56.5,
+        "mape_pct": 18.3,
+        "bias_days": -12.3
+      }
+    },
+    "40": {
+      "n_projects": 120,
+      "baseline": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 48.0,
+        "median_ae_days": 42.4,
+        "mape_pct": 17.7,
+        "bias_days": -12.8,
+        "interval_coverage": 0.608
+      },
+      "ml": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 40.0,
+        "median_ae_days": 28.4,
+        "mape_pct": 14.3,
+        "bias_days": -11.0,
+        "interval_coverage": 0.725
+      },
+      "blend": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 39.9,
+        "median_ae_days": 29.6,
+        "mape_pct": 14.4,
+        "bias_days": -11.4,
+        "interval_coverage": 0.75
+      },
+      "evm": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 51.4,
+        "median_ae_days": 43.3,
+        "mape_pct": 19.6,
+        "bias_days": 0.7
+      },
+      "earned_schedule": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 45.4,
+        "median_ae_days": 41.8,
+        "mape_pct": 17.1,
+        "bias_days": -9.7
+      }
+    },
+    "60": {
+      "n_projects": 120,
+      "baseline": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 32.2,
+        "median_ae_days": 27.6,
+        "mape_pct": 16.5,
+        "bias_days": -9.8,
+        "interval_coverage": 0.75
+      },
+      "ml": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 29.1,
+        "median_ae_days": 21.7,
+        "mape_pct": 14.6,
+        "bias_days": -7.0,
+        "interval_coverage": 0.775
+      },
+      "blend": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 28.4,
+        "median_ae_days": 19.8,
+        "mape_pct": 14.2,
+        "bias_days": -7.7,
+        "interval_coverage": 0.8
+      },
+      "evm": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 45.5,
+        "median_ae_days": 36.4,
+        "mape_pct": 20.7,
+        "bias_days": -33.8
+      },
+      "earned_schedule": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 31.5,
+        "median_ae_days": 25.2,
+        "mape_pct": 16.4,
+        "bias_days": -9.7
+      }
+    },
+    "80": {
+      "n_projects": 120,
+      "baseline": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 23.9,
+        "median_ae_days": 21.5,
+        "mape_pct": 23.2,
+        "bias_days": -4.6,
+        "interval_coverage": 0.683
+      },
+      "ml": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 19.7,
+        "median_ae_days": 15.7,
+        "mape_pct": 18.1,
+        "bias_days": -7.1,
+        "interval_coverage": 0.783
+      },
+      "blend": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 20.0,
+        "median_ae_days": 16.1,
+        "mape_pct": 18.4,
+        "bias_days": -6.9,
+        "interval_coverage": 0.775
+      },
+      "evm": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 62.8,
+        "median_ae_days": 40.2,
+        "mape_pct": 50.1,
+        "bias_days": -58.2
+      },
+      "earned_schedule": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 24.9,
+        "median_ae_days": 22.4,
+        "mape_pct": 22.9,
+        "bias_days": -8.6
+      }
+    }
+  },
+  "test_without_drift": {
+    "n_projects": 120,
+    "model_version": "sched-gbm-0.1.0-seed0",
+    "20": {
+      "n_projects": 120,
+      "baseline": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 65.7,
+        "median_ae_days": 58.3,
+        "mape_pct": 19.8,
+        "bias_days": 0.2,
+        "interval_coverage": 0.708
+      },
+      "ml": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 50.2,
+        "median_ae_days": 41.5,
+        "mape_pct": 14.9,
+        "bias_days": -7.3,
+        "interval_coverage": 0.783
+      },
+      "blend": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 50.2,
+        "median_ae_days": 41.4,
+        "mape_pct": 14.8,
+        "bias_days": -7.8,
+        "interval_coverage": 0.8
+      },
+      "evm": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 110.6,
+        "median_ae_days": 84.8,
+        "mape_pct": 32.1,
+        "bias_days": 56.5
+      },
+      "earned_schedule": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 63.2,
+        "median_ae_days": 56.1,
+        "mape_pct": 19.3,
+        "bias_days": -2.9
+      }
+    },
+    "40": {
+      "n_projects": 120,
+      "baseline": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 40.6,
+        "median_ae_days": 38.7,
+        "mape_pct": 15.9,
+        "bias_days": -9.3,
+        "interval_coverage": 0.75
+      },
+      "ml": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 37.7,
+        "median_ae_days": 30.3,
+        "mape_pct": 14.0,
+        "bias_days": -8.0,
+        "interval_coverage": 0.758
+      },
+      "blend": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 36.2,
+        "median_ae_days": 28.3,
+        "mape_pct": 13.6,
+        "bias_days": -8.4,
+        "interval_coverage": 0.842
+      },
+      "evm": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 46.0,
+        "median_ae_days": 37.5,
+        "mape_pct": 18.3,
+        "bias_days": 8.3
+      },
+      "earned_schedule": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 39.8,
+        "median_ae_days": 37.8,
+        "mape_pct": 15.8,
+        "bias_days": -5.4
+      }
+    },
+    "60": {
+      "n_projects": 120,
+      "baseline": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 30.7,
+        "median_ae_days": 24.5,
+        "mape_pct": 16.3,
+        "bias_days": -4.9,
+        "interval_coverage": 0.675
+      },
+      "ml": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 27.7,
+        "median_ae_days": 21.0,
+        "mape_pct": 13.9,
+        "bias_days": -3.3,
+        "interval_coverage": 0.767
+      },
+      "blend": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 27.2,
+        "median_ae_days": 22.3,
+        "mape_pct": 13.8,
+        "bias_days": -3.6,
+        "interval_coverage": 0.792
+      },
+      "evm": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 42.1,
+        "median_ae_days": 32.0,
+        "mape_pct": 19.5,
+        "bias_days": -29.5
+      },
+      "earned_schedule": {
+        "n": 120,
+        "n_no_forecast": 0,
+        "mae_days": 30.1,
+        "median_ae_days": 25.1,
+        "mape_pct": 16.1,
+        "bias_days": -4.3
+      }
+    },
+    "80": {
+      "n_projects": 119,
+      "baseline": {
+        "n": 119,
+        "n_no_forecast": 0,
+        "mae_days": 25.3,
+        "median_ae_days": 20.5,
+        "mape_pct": 24.9,
+        "bias_days": -2.1,
+        "interval_coverage": 0.63
+      },
+      "ml": {
+        "n": 119,
+        "n_no_forecast": 0,
+        "mae_days": 19.2,
+        "median_ae_days": 13.3,
+        "mape_pct": 18.6,
+        "bias_days": -6.3,
+        "interval_coverage": 0.798
+      },
+      "blend": {
+        "n": 119,
+        "n_no_forecast": 0,
+        "mae_days": 19.2,
+        "median_ae_days": 13.3,
+        "mape_pct": 18.6,
+        "bias_days": -6.3,
+        "interval_coverage": 0.798
+      },
+      "evm": {
+        "n": 119,
+        "n_no_forecast": 0,
+        "mae_days": 62.9,
+        "median_ae_days": 42.6,
+        "mape_pct": 51.4,
+        "bias_days": -58.0
+      },
+      "earned_schedule": {
+        "n": 119,
+        "n_no_forecast": 0,
+        "mae_days": 24.9,
+        "median_ae_days": 20.1,
+        "mape_pct": 23.6,
+        "bias_days": -5.7
+      }
+    }
+  },
+  "baseline_tuning": null
+}

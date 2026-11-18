@@ -11,6 +11,9 @@ import { accrueCosts, plannedTotals, totalsByCategory } from '../domain/cost.js'
 import { STATE_TEXT, taskLifecycle } from '../domain/lifecycle.js';
 import { getActiveEstimate, getCostRates } from './projects.js';
 import { siteDate } from './ingest.js';
+import crypto from 'node:crypto';
+import { schedulePayload, forecastChart } from '../domain/schedulemodel.js';
+import { InferenceError, scheduleForecast } from '../inference.js';
 
 export async function loadState(db, project) {
   const q = (text, params = [project.id]) => db.query(text, params).then((r) => r.rows);
@@ -82,10 +85,13 @@ export async function recompute(db, project, asOf = today()) {
   const evidence = evidenceState(state, project, asOf);
   const safety = overallSafety(sdi, state.hazards, evidence.summary.gap);
 
+  const payload = schedulePayload(project, ev, asOf);
+  const scheduleModel = await modelForecast(db, project, asOf, payload);
   await db.query(
-    `INSERT INTO forecasts (project_id, as_of, budget, schedule) VALUES ($1,$2,$3,$4)
-     ON CONFLICT (project_id, as_of) DO UPDATE SET budget = EXCLUDED.budget, schedule = EXCLUDED.schedule`,
-    [project.id, asOf, ev.metrics.budget, ev.metrics.schedule]);
+    `INSERT INTO forecasts (project_id, as_of, budget, schedule, schedule_model) VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (project_id, as_of) DO UPDATE SET budget = EXCLUDED.budget, schedule = EXCLUDED.schedule,
+       schedule_model = EXCLUDED.schedule_model`,
+    [project.id, asOf, ev.metrics.budget, ev.metrics.schedule, scheduleModel]);
   if (sdi) {
     await db.query(
       `INSERT INTO risk_scores (project_id, score_date, sdi, severity_part, density_part, progression_part, weights, status, explanation)
@@ -121,7 +127,52 @@ export async function recompute(db, project, asOf = today()) {
   }
   if (toResolve.length) await db.query('UPDATE alerts SET resolved_at = now() WHERE id = ANY($1::uuid[])', [toResolve]);
 
-  return { ready: true, asOf, state, evidence, cost, lifecycle, ...ev, sdi, safety };
+  return { ready: true, asOf, state, evidence, cost, lifecycle, ...ev, sdi, safety, schedulePayload: payload, scheduleModel };
+}
+
+// ------------------------------------------------------------- model-based completion forecast
+const hashOf = (x) => crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex').slice(0, 16);
+let warnedModelDown = false;
+
+/**
+ * Model forecast beside the EVM one (HANDOFF.md D16, D17): the inference service's baseline / ML / blend for
+ * `payload`. Re-uses the stored answer of the same day when the inputs have not changed (dashboards call
+ * recompute on every load). Never throws for a service problem: the result is then null and the EVM forecast is
+ * unaffected.
+ */
+export async function modelForecast(db, project, asOf, payload) {
+  if (!payload) return null;
+  const inputHash = hashOf(payload);
+  const prev = (await db.query('SELECT schedule_model FROM forecasts WHERE project_id = $1 AND as_of = $2', [project.id, asOf])).rows[0];
+  if (prev?.schedule_model?.input_hash === inputHash) return prev.schedule_model;
+  try {
+    const out = await scheduleForecast(payload);
+    warnedModelDown = false;
+    return { ...out, input_hash: inputHash, generated_at: new Date().toISOString() };
+  } catch (e) {
+    if (!(e instanceof InferenceError)) throw e;
+    if (!warnedModelDown) console.warn(`[forecast] model-based schedule forecast unavailable: ${e.message}`);
+    warnedModelDown = true;
+    return null;
+  }
+}
+
+/** Inputs of the model forecast for `asOf` (also used by the AI assistant's what-if tool). */
+export async function scheduleInputs(db, project, asOf = today(), { paceFactor = 1 } = {}) {
+  const state = await loadState(db, project);
+  if (!state.tasks.length || !project.planned_end_date) return null;
+  const acc = accrueCosts(state.spend, state.crews, state.costRates);
+  const ev = evaluate({ tasks: state.tasks, progress: state.progress, spend: acc.rows, asOf,
+    projectStart: project.start_date, plannedEnd: project.planned_end_date, crews: state.crews });
+  return schedulePayload(project, ev, asOf, { paceFactor });
+}
+
+/** What-if: the model forecast if the future pace changes by `paceFactor`. Computes only; stores nothing. */
+export async function scheduleWhatIf(db, project, paceFactor, asOf = today()) {
+  const payload = await scheduleInputs(db, project, asOf, { paceFactor });
+  if (!payload) return { ready: false, reason: 'no schedule or budget yet' };
+  const model = await scheduleForecast(payload);
+  return { ready: true, as_of: asOf, pace_factor: paceFactor, ...model, chart: forecastChart(payload, model) };
 }
 
 // ------------------------------------------------------------------ dashboards
@@ -251,6 +302,12 @@ export async function buildDashboard(db, project, role, asOf = today()) {
     evidence: { ...investor.evidence, cameras: r.evidence.health, uncovered_tasks: r.evidence.uncovered.map((t) => t.name), frames },
     inventory, site_status: siteStatus,
     standards: standardsUsed,
+    schedule_model: r.scheduleModel ? {
+      ...r.scheduleModel,
+      evm: { forecast_end: m.schedule.forecast_end ?? null, status: m.schedule.status, spi: m.schedule.spi ?? null },
+      chart: forecastChart(r.schedulePayload, r.scheduleModel),
+      disclaimer: 'Experimental. The ML part is trained and evaluated on synthetic projects: this validates the method, not real-world accuracy.',
+    } : null,
     alerts: alertsRows.map((a) => pickAlert(a, 'engineer')),
   };
 }
